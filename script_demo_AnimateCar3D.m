@@ -118,6 +118,114 @@ end
 disp('Welcome to the demo code for the AnimateCar3D library!')
 fprintf(1,'Using CarMesh3D from: %s\n', carMesh3DRoot);
 
+% Save the demo animations as GIFs in the Images folder? (1 = yes)
+flag_saveGifs = 1;
+
+
+%% Step 1. Check that CarMesh3D provides what AnimateCar3D needs
+% Stops with a clear error if a new CarMesh3D release changed something
+% AnimateCar3D relies on (see the README, "Checking CarMesh3D").
+checkReport = fcn_AnimateCar3D_checkCarMesh3D(FigNum=-1);
+
+
+%% Step 2. Load the vehicle meshes, at two levels of detail
+% Each mesh is kept as the finished CarMesh3D mesh (near tier) and a
+% low-detail copy (middle tier); its size is kept for far-tier boxes.
+meshSet = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','2014_Ford_TransitConnect_XLTCargoLWB'}, FigNum=2);
+
+
+%% Step 3. One vehicle splitting into ten decision branches
+% The ego vehicle drives straight for 2 s, then splits into ten possible
+% paths, from a hard left to a hard right. Each branch is drawn
+% see-through in its own color, except the chosen one (solid); a line on
+% the ground traces each path. The scene player draws whatever the
+% display list holds at each step: here the list is built directly from
+% the motions (later, the selector will build it).
+priusID = '2013_Toyota_Prius_Four';
+priusSpec = meshSet.(matlab.lang.makeValidName(priusID)).Full.VehicleSpec;
+branchMotions = fcn_AnimateCar3D_fillBranchMotions(NumBranches=10, SplitTime=2, Duration=6, ...
+    Speed=8, MaxCurvature=1/16, VehicleSpec=priusSpec, FigNum=3);
+chosenBranch = 4;
+Nbranches = numel(branchMotions.Branches);
+fraction = linspace(0,1,Nbranches)';
+branchColors = [0.15+0.75*fraction, 0.35*ones(Nbranches,1), 0.9-0.75*fraction];   % blue (left) to red (right)
+branchAlpha = 0.35*ones(Nbranches,1);
+branchAlpha(chosenBranch) = 1;
+
+% The scene and camera
+figNum = 4;
+figure(figNum); clf;
+set(gcf, 'Position', [100 100 800 450], 'Color', 'w');
+fcn_CarMesh3D_plotScene(GroundExtent=[-10 70 -40 40], GridSpacing=5, FigNum=figNum);
+axis off;
+campos([-4 -34 24]); camtarget([30 0 0]); camva(25);
+set(gca, 'Projection', 'perspective');
+
+% The animation loop: one display list per step, drawn by the player
+timeSteps = (0:0.05:6)';
+pathLines = gobjects(Nbranches,1);
+playerState = [];
+gifFile = fullfile(pwd,'Images','branching_tenChoices.gif');
+gifFrame = 0;
+totalCreated = 0;
+totalReused = 0;
+for ith_step = 1:numel(timeSteps)
+    t = timeSteps(ith_step);
+    if t < branchMotions.Parent.SplitTime - 1e-9
+        % Before the split: only the ego vehicle
+        parent = branchMotions.Parent;
+        row = find(parent.Time <= t + 1e-9, 1, 'last');
+        displayList = fcn_AnimateCar3D_fillDisplayList(Time=t, Instance=parent.Instance, MeshID=priusID, ...
+            Pose=parent.Pose(row,:), WheelSpin=parent.WheelSpin(row,:), SteerAngle=parent.SteerAngle(row,:));
+    else
+        % After the split: every branch, at the same time
+        branches = branchMotions.Branches;
+        row = find(branches(1).Time <= t + 1e-9, 1, 'last');
+        poses = cell2mat(arrayfun(@(b) b.Pose(row,:), branches, 'UniformOutput', false));
+        spins = cell2mat(arrayfun(@(b) b.WheelSpin(row,:), branches, 'UniformOutput', false));
+        steers = cell2mat(arrayfun(@(b) b.SteerAngle(row,:), branches, 'UniformOutput', false));
+        displayList = fcn_AnimateCar3D_fillDisplayList(Time=t, Instance={branches.Instance}, MeshID=priusID, ...
+            Pose=poses, WheelSpin=spins, SteerAngle=steers, Color=branchColors, Alpha=branchAlpha);
+
+        % Path lines on the ground (drawn by this script for now)
+        for ith_branch = 1:Nbranches
+            pathXY = branches(ith_branch).Pose(1:row,1:2);
+            if ~isgraphics(pathLines(ith_branch))
+                pathLines(ith_branch) = line(pathXY(:,1), pathXY(:,2), 0.02*ones(row,1), ...
+                    'Color', branchColors(ith_branch,:), 'LineWidth', 1.5 + 1.5*(ith_branch==chosenBranch));
+            else
+                set(pathLines(ith_branch), 'XData', pathXY(:,1), 'YData', pathXY(:,2), 'ZData', 0.02*ones(row,1));
+            end
+        end
+    end
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
+    totalCreated = totalCreated + playerState.Stats.NumCreated;
+    totalReused = totalReused + playerState.Stats.NumReused;
+    title(sprintf('t = %.2f s', t));
+    drawnow;
+    if flag_saveGifs && mod(ith_step-1,2)==0
+        % A GIF has only 256 colors. A fixed set (the first frame's 30
+        % main colors, an even spread of 216, and the branch colors) keeps
+        % the thin colored paths from turning gray.
+        gifFrame = gifFrame + 1;
+        if gifFrame==1
+            firstImage = getframe(gcf);
+            [~, firstColors] = rgb2ind(firstImage.cdata, 30, 'nodither');
+            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
+            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:); branchColors];
+        end
+        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.1);
+    end
+end
+fprintf(1,'Branching demo: %d steps; %d vehicles drawn new, %d reused (the ego''s graphics become a branch).\n', ...
+    numel(timeSteps), totalCreated, totalReused);
+
+
+%% Step 4. How fast can the player draw dense traffic?
+% See script_AnimateCar3D_frameRateTest.m, which times the player with
+% 100 to 1000 vehicles around the ego vehicle, using the detail tiers.
+
+
 
 %% Functions follow
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -130,6 +238,19 @@ fprintf(1,'Using CarMesh3D from: %s\n', carMesh3DRoot);
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%§
+
+%% fcn_INTERNAL_saveGifFrameFixedColors
+function fcn_INTERNAL_saveGifFrameFixedColors(figureHandle, fileName, frameNumber, colorMap, delayTime)
+% Like fcn_CarMesh3D_saveGifFrame, but with one fixed color map for every
+% frame, so that small colored details keep their colors
+frame = getframe(figureHandle);
+indexedImage = rgb2ind(frame.cdata, colorMap, 'nodither');
+if frameNumber==1
+    imwrite(indexedImage, colorMap, fileName, 'gif', 'LoopCount', Inf, 'DelayTime', delayTime);
+else
+    imwrite(indexedImage, colorMap, fileName, 'gif', 'WriteMode', 'append', 'DelayTime', delayTime);
+end
+end % Ends fcn_INTERNAL_saveGifFrameFixedColors
 
 %% function fcn_INTERNAL_clearUtilitiesFromPathAndFolders
 function fcn_INTERNAL_clearUtilitiesFromPathAndFolders
