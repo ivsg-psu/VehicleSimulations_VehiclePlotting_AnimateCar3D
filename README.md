@@ -194,6 +194,47 @@ Later: a 2D (top-down) mode using the same detail tiers.
 - **GIF colors.** `fcn_CarMesh3D_saveGifFrame` picks a new 256-color map for each frame, which turned the thin red paths and red-tinted branches gray. The main demo writes its GIF with one fixed color map (the first frame's 30 main colors, an even spread of 216 colors, and the branch colors).
 - Both are listed under [TO-DO](#to-do) as changes wanted in a later CarMesh3D release.
 
+### Step 2 design: the selector (decided 2026_11_19, not yet built)
+
+The selector decides, at each time step, which objects are drawn and at what tier; nothing else does. It runs once per step, between the object catalog and the scene player.
+
+**Inputs:** the time; the object catalog (what exists, when, and where, with roles and links); the display criteria (read fresh every step, so a change takes effect on the next frame); and its own memory of the last step (which objects were shown, at which tier). **Output:** the display list (the same structure `fcn_AnimateCar3D_fillDisplayList` makes), plus which objects entered and left.
+
+**Each step:**
+1. **Who exists now:** objects whose time span includes t. A branch exists from its split time; its parent stops being shown when its branches take over.
+2. **Who is nearby:** only the catalog's grid cells near the region are checked. Static objects are rechecked only when the region has moved noticeably.
+3. **Region test:** see the region choices below.
+4. **Always shown:** roles such as `ego`, `confederate`, and every branch skip the region test.
+5. **Detail tiers:** nearest first: up to the near count within the near distance, then the middle count within the middle distance, then far boxes out to the far distance. **Ties go to the nearest object, whatever its role** (pedestrians, for example, may often be drawn as boxes anyway). Some roles can have a fixed tier (the ego is always near).
+6. **Hysteresis:** an object enters a tier at its distance and leaves it only beyond that distance plus **10%** (the default), so an object near a boundary does not flicker between tiers.
+7. **State at t:** pose, wheel spin, steering, body motion, and lights. Full motion is loaded from file only for near and middle objects; far boxes use the catalog's thinned path.
+8. **Style from role and links:** branches see-through in their parent's style, confederates in their own color (defaults the scene list can override).
+
+**Region choices** (`Region` in the display criteria):
+
+| Region center | Moves? | Use |
+|---|---|---|
+| the ego vehicle (**default**) | with the ego | normal driving scenes |
+| any named object | with that object | follow a confederate or another vehicle |
+| a fixed point or box in the global frame | no | watch an intersection or a parking lot |
+| a moving point given by the user (a path, or a function of time) | yes | sweep the region along a route |
+| the camera's target | with the camera | let a camera **pan** a complex scene, with the ego vehicle passing into and out of view |
+
+The region shape is a circle (radius) or a box (length and width, aligned with the global axes or with the center's heading). When the region follows the camera, the animation loop passes the camera's current target to the selector each step.
+
+**Display criteria** (`fcn_AnimateCar3D_fillDisplayCriteria`, with defaults, so a script changes only what it needs):
+
+| Field | Default |
+|---|---|
+| Region | centered on the ego, circle of radius 100 m |
+| Tier limits | near: 10 within 30 m; middle: 40 within 70 m; far: out to 100 m |
+| Hysteresis | 10% (leave a tier beyond 110% of its entry distance) |
+| Roles to show | all |
+| Always shown | `ego`, `confederate`, and every branch |
+| Fixed tiers | `ego` always near |
+
+**Planned functions:** `fcn_AnimateCar3D_fillDisplayCriteria` (the criteria, with defaults) and `fcn_AnimateCar3D_selectObjects(catalog, time, criteria, SelectorState=state)`, which returns the display list and its updated memory (the same pattern as the player). The frame-rate test's stand-in already does steps 3 and 5 (rank by distance, cap each tier); the selector adds the rest.
+
 ## TO-DO
 
 **Next:** step 2 (scene list, object catalog, selector, display criteria, static scene).
