@@ -16,13 +16,14 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %       playResult = fcn_AnimateCar3D_playScenario(scenario,...
 %           (TimeStep=seconds), (CameraSettings=settings),...
 %           (CameraFollow=instance), (ShowOptions=flag), (Caption=flag),...
-%           (GifFile=fileName), (GifDelay=seconds), (FigNum=figNum))
+%           (GifFile=fileName), (GifDelay=seconds), (Terrain=terrain),...
+%           (CameraPitch=flag), (FigNum=figNum))
 %
 % INPUTS:
 %
 %      scenario: a structure with Road (a road or road network from
 %      fcn_AnimateCar3D_fillRoad), SceneList, Motions, and optionally
-%      CenterlineOptions, Name, and Description.
+%      CenterlineOptions, Name, Description, and CameraPitch.
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
@@ -40,6 +41,26 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %
 %      Caption: a caption with the scenario's name, description, time,
 %      and the followed object's speed. Default true.
+%
+%      CameraPitch: how the camera tilts on hills (it always rises and
+%      falls with the followed object):
+%           [] (default): the scenario's own CameraPitch if it has one
+%               (the 'mountainRoad' example: 'road'), else 'none'.
+%           false or 'none': level; the horizon stays level and
+%               the slopes show in the scenery.
+%           true or 'vehicle': with the object's own pitch; the object
+%               stays framed the same way (its pitch is hard to see).
+%           'road': with the road's grade at the camera's own position
+%               (along the object's heading); the camera follows the
+%               road's surface, so the object's pitch shows against it
+%               (for example, cresting a hill ahead of the camera).
+%      The camera turns about the object in each case.
+%
+%      Terrain: the ground. 'auto' (default): when the road is not level
+%      (hills or banking), the ground around it from
+%      fcn_AnimateCar3D_fillTerrain (a mountain for the 'mountain'
+%      preset), else flat ground; a terrain from fcn_AnimateCar3D_fillTerrain
+%      to use that one; [] for flat ground always.
 %
 %      GifFile: a GIF to save ('' for none, the default); GifDelay:
 %      seconds per GIF frame (default: TimeStep, real time).
@@ -77,6 +98,10 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playScenario
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_playScenario
+%   % * Added the Terrain option: the ground around roads with hills or banking
 
 % TO-DO:
 %
@@ -101,6 +126,8 @@ arguments
     options.Caption = true              % name, description, and time
     options.GifFile = ''                % GIF to save
     options.GifDelay = []               % seconds per GIF frame; [] for TimeStep
+    options.Terrain = 'auto'            % 'auto', a terrain (fcn_AnimateCar3D_fillTerrain), or [] for flat
+    options.CameraPitch = []            % [] (the scenario's, else 'none'), false/'none', true/'vehicle', or 'road'
     options.FigNum = 1                  % figure to draw in; -1 for fast mode
 end
 
@@ -168,6 +195,9 @@ if 0==flag_max_speed
         if ~isempty(options.GifDelay) && ~(isnumeric(options.GifDelay) && isscalar(options.GifDelay) && options.GifDelay > 0)
             error('GifDelay must be a positive number of seconds, or []');
         end
+        if ~(isempty(options.CameraPitch) || (islogical(options.CameraPitch) && isscalar(options.CameraPitch)) || any(strcmp(options.CameraPitch, {'none','vehicle','road'})))
+            error('CameraPitch must be false, true, ''none'', ''vehicle'', or ''road''');
+        end
     end
 end
 
@@ -193,6 +223,19 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+%%%% How the camera tilts
+pitchMode = options.CameraPitch;
+if isempty(pitchMode)
+    pitchMode = 'none';
+    if isfield(scenario, 'CameraPitch') && ~isempty(scenario.CameraPitch)
+        pitchMode = scenario.CameraPitch;
+    end
+end
+if islogical(pitchMode)
+    pitchModes = {'none','vehicle'};
+    pitchMode = pitchModes{pitchMode + 1};
+end
+
 %%%% Meshes and the catalog
 sceneList = scenario.SceneList;
 meshIDs = unique({sceneList.MeshID});
@@ -212,21 +255,39 @@ if isfield(scenario, 'CenterlineOptions') && ~isempty(scenario.CenterlineOptions
     pathPoints = [pathPoints; cell2mat(cellfun(@(option) option.XY, scenario.CenterlineOptions(:), 'UniformOutput', false))];
 end
 extent = [min(pathPoints(:,1)) - 150, max(pathPoints(:,1)) + 150, min(pathPoints(:,2)) - 150, max(pathPoints(:,2)) + 150];
+terrain = options.Terrain;
+if ischar(terrain) && strcmp(terrain, 'auto')
+    terrain = [];
+    if ~fcn_INTERNAL_isLevel(scenario.Road)
+        terrain = fcn_AnimateCar3D_fillTerrain(scenario.Road, FigNum=-1);
+    end
+end
 fcn_CarMesh3D_plotScene(GroundExtent=extent, GridSpacing=0, GroundColor=[0.55 0.62 0.48], FigNum=figureHandle.Number);
 axesHandle = get(figureHandle, 'CurrentAxes');
 set(axesHandle, 'Position', [0 0 1 0.9]);
-roadHandles = fcn_AnimateCar3D_plotRoad(scenario.Road, AxesHandle=axesHandle, FigNum=-1);
+zLimits = [-0.5 40];
+if ~isempty(terrain)
+    delete(findall(axesHandle, 'Type', 'patch'));      % (the flat ground: the terrain replaces it)
+    fcn_AnimateCar3D_plotTerrain(terrain, AxesHandle=axesHandle, FigNum=-1);
+    extent = [terrain.X([1 end]) terrain.Y([1 end])];
+    zLimits = [min(terrain.Z(:)) - 1, max(terrain.Z(:)) + 40];
+end
+roadHandles = fcn_AnimateCar3D_plotRoad(scenario.Road, ShowBanks=isempty(terrain), AxesHandle=axesHandle, FigNum=-1);
 if options.ShowOptions && isfield(scenario, 'CenterlineOptions')
     pathColors = [0.10 0.35 0.85; 0.85 0.33 0.10; 0.49 0.18 0.56; 0.47 0.67 0.19; 0.30 0.75 0.93; 0.64 0.08 0.18];
     for ith_option = 1:numel(scenario.CenterlineOptions)
         thisOption = scenario.CenterlineOptions{ith_option};
-        line(axesHandle, thisOption.XY(:,1), thisOption.XY(:,2), 0.04*ones(size(thisOption.S)), 'LineWidth', 1.5, ...
+        optionZ = 0.04*ones(size(thisOption.S));
+        if ~isempty(terrain)
+            optionZ = fcn_AnimateCar3D_getRoadHeight(scenario.Road, thisOption.XY, FigNum=-1) + 0.06;
+        end
+        line(axesHandle, thisOption.XY(:,1), thisOption.XY(:,2), optionZ, 'LineWidth', 1.5, ...
             'Color', pathColors(mod(ith_option-1, size(pathColors,1))+1,:), 'Tag', 'AnimateCar3D centerline option');
     end
 end
 axis(axesHandle, 'equal');
 axis(axesHandle, 'off');
-set(axesHandle, 'XLim', extent(1:2), 'YLim', extent(3:4), 'ZLim', [-0.5 40], 'Projection', 'perspective');
+set(axesHandle, 'XLim', extent(1:2), 'YLim', extent(3:4), 'ZLim', zLimits, 'Projection', 'perspective');
 cameraSettings = options.CameraSettings;
 if ischar(cameraSettings) && strcmp(cameraSettings, 'default')
     cameraSettings = fcn_CarMesh3D_fillCameraSettings(Mode='kite', Position=[-22 -16 10], Target=[18 1 0], FieldOfView=45, FigNum=-1);
@@ -253,6 +314,30 @@ for ith_frame = 1:numel(frameTimes)
         followState = fcn_AnimateCar3D_getObjectState(catalog, followIndex, thisTime, Detail='pose', FigNum=-1);
         if followState.Exists
             fcn_CarMesh3D_updateCamera(cameraSettings, followState.Pose, Time=thisTime, AxesHandle=axesHandle, FigNum=-1);
+            % (CarMesh3D's camera keeps to z = 0: raise it with the followed object)
+            heightUp = [0 0 followState.Pose(3)];
+            set(axesHandle, 'CameraPosition', get(axesHandle, 'CameraPosition') + heightUp, ...
+                'CameraTarget', get(axesHandle, 'CameraTarget') + heightUp);
+            if ~strcmp(pitchMode, 'none')
+                % (turn the camera about the object by the pitch: yaw back,
+                % pitch, yaw again; positive pitch is nose down)
+                yaw = followState.Pose(6);
+                pitch = followState.Pose(5);
+                if strcmp(pitchMode, 'road')
+                    % (the road's grade at the camera, along the heading)
+                    cameraXY = get(axesHandle, 'CameraPosition');
+                    probeXY = cameraXY(1:2) + [1; -1]*1.4*[cos(yaw) sin(yaw)];
+                    probeZ = fcn_AnimateCar3D_getRoadHeight(scenario.Road, probeXY, FigNum=-1);
+                    pitch = -atan((probeZ(1) - probeZ(2))/2.8);
+                end
+                rotationYaw = [cos(yaw) -sin(yaw) 0; sin(yaw) cos(yaw) 0; 0 0 1];
+                rotationPitch = [cos(pitch) 0 sin(pitch); 0 1 0; -sin(pitch) 0 cos(pitch)];
+                rotation = rotationYaw*rotationPitch*rotationYaw';
+                pivot = followState.Pose(1:3);
+                set(axesHandle, 'CameraPosition', pivot + (rotation*(get(axesHandle, 'CameraPosition') - pivot)')', ...
+                    'CameraTarget', pivot + (rotation*(get(axesHandle, 'CameraTarget') - pivot)')', ...
+                    'CameraUpVector', (rotation*[0; 0; 1])');
+            end
         end
     end
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, thisTime, criteria, SelectorState=selectorState, ...
@@ -313,6 +398,27 @@ end % Ends main function
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% fcn_INTERNAL_isLevel
+function flagLevel = fcn_INTERNAL_isLevel(road)
+% True when no road in it has hills or banking
+if isfield(road, 'Roads')
+    roads = road.Roads;
+else
+    roads = road;
+end
+flagLevel = true;
+for ith_road = 1:numel(roads)
+    if isfield(roads(ith_road), 'ElevationProfile') && ~isempty(roads(ith_road).ElevationProfile)
+        records = roads(ith_road).ElevationProfile;
+        flagLevel = flagLevel && all([records.A records.B records.C records.D]==0);
+    end
+    if isfield(roads(ith_road), 'LateralProfile') && isfield(roads(ith_road).LateralProfile, 'Superelevation')
+        records = roads(ith_road).LateralProfile.Superelevation;
+        flagLevel = flagLevel && all([records.A records.B records.C records.D]==0);
+    end
+end
+end % Ends fcn_INTERNAL_isLevel
 
 %% fcn_INTERNAL_caption
 function fcn_INTERNAL_caption(figureHandle, scenario, thisTime, followSpeed, followName)

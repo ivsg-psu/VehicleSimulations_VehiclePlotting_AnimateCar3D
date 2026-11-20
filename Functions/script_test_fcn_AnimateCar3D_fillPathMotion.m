@@ -104,6 +104,10 @@ middle = round(numel(motion.Time)/2);
 bicycleAngle = atan(spec.Wheelbase/20);
 assert(motion.SteerAngle(middle,1) > bicycleAngle && motion.SteerAngle(middle,2) < bicycleAngle);   % (left turn: left tire inside)
 assert(abs(mean(motion.SteerAngle(middle,:)) - bicycleAngle) < 0.01);
+% (the body leans out of the turn: 8^2/20 = 3.2 m/s^2 sideways, 4 deg per g)
+assert(abs(motion.BodyRoll(middle) - deg2rad(4)*3.2/9.81) < 0.002 && all(abs(motion.BodyPitch(2:end-1)) < 1e-6));
+exaggerated = fcn_AnimateCar3D_fillPathMotion(circlePath, Speed=8, BodyMotionScale=3, FigNum=-1);
+assert(abs(exaggerated.BodyRoll(middle) - 3*motion.BodyRoll(middle)) < 1e-9);
 
 %% TEST case: Speed as values or a function; brake lights when slowing
 figNum = 20003;
@@ -114,8 +118,28 @@ figure(figNum); close(figNum);
 slowing = fcn_AnimateCar3D_fillPathMotion(straightPath, Speed=@(s) 15 - 0.1*s);
 assert(abs(slowing.Speed(1) - 15) < 1e-9 && abs(slowing.Speed(end) - 5) < 1e-6);
 assert(all(strcmp({slowing.LightStates(2:end-1).Tail}, 'brake')));
+middle = round(numel(slowing.Time)/2);
+assert(slowing.BodyPitch(middle) > 0 && all(abs(slowing.BodyRoll) < 1e-9));   % (nose down when braking)
 byPoint = fcn_AnimateCar3D_fillPathMotion(straightPath, Speed=linspace(5, 10, 101)');
 assert(all(strcmp({byPoint.LightStates.Tail}, 'on')) && abs(byPoint.Speed(end) - 10) < 1e-6);
+
+%% TEST case: On a mountain road: height, pitch, and roll from the road
+figNum = 20009;
+titleString = sprintf('TEST case: On a mountain road: height, pitch, and roll from the road');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+[mountainRoad, mountainOptions] = fcn_AnimateCar3D_fillRoad(Preset='mountain', FigNum=-1);
+motion = fcn_AnimateCar3D_fillPathMotion(mountainOptions{1}.XY, Speed=15, TimeStep=0.5, Road=mountainRoad, FigNum=-1);
+assert(size(motion.Pose,2)==6);
+roadZ = fcn_AnimateCar3D_getRoadHeight(mountainRoad, motion.Pose(:,1:2));
+assert(max(abs(motion.Pose(:,3) - roadZ)) < 1e-9);
+climbing = motion.Distance > 100 & motion.Distance < 0.4*motion.Distance(end);
+descending = motion.Distance > 0.6*motion.Distance(end) & motion.Distance < motion.Distance(end) - 100;
+assert(all(motion.Pose(climbing,5) < 0) && all(motion.Pose(descending,5) > 0));    % (nose up climbing, down descending)
+assert(max(abs(motion.Pose(:,4))) > 0.02 && max(abs(motion.Pose(:,4))) < atan(0.06) + 0.01);   % (rolls on the banking)
+flatMotion = fcn_AnimateCar3D_fillPathMotion(mountainOptions{1}.XY, Speed=15, TimeStep=0.5, FigNum=-1);
+assert(size(flatMotion.Pose,2)==3 && max(abs(flatMotion.Pose(:,[1 2 3]) - motion.Pose(:,[1 2 6])), [], 'all') < 1e-12);
 
 %% Fast Mode Tests
 

@@ -18,7 +18,8 @@ function motion = fcn_AnimateCar3D_fillPathMotion(pathXY, options)
 %
 %       motion = fcn_AnimateCar3D_fillPathMotion(pathXY, (Speed=speed),...
 %           (TimeStep=seconds), (StartTime=seconds), (Instance=name),...
-%           (VehicleSpec=spec), (FigNum=figNum))
+%           (VehicleSpec=spec), (Road=road), (PitchPerG=degrees),...
+%           (RollPerG=degrees), (BodyMotionScale=scale), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -40,14 +41,35 @@ function motion = fcn_AnimateCar3D_fillPathMotion(pathXY, options)
 %      wheelbase, front track, and tire size. Default: the
 %      'genericSedan' preset.
 %
+%      Road: a road (or road network) from fcn_AnimateCar3D_fillRoad, to
+%      put the vehicle on its surface: the height under the vehicle, the
+%      pitch from the heights 1.4 m ahead and behind (nose down is
+%      positive, so climbing pitches negative), and the roll from the
+%      heights 0.8 m to each side (right side down is positive). The pose
+%      is then [x y z roll pitch yaw]. Default [] (flat: [x y yaw]).
+%      This is the pose of the wheels (the unsprung mass) on the road;
+%      the body moves on them (below).
+%
+%      PitchPerG: the body's pitch on its wheels, in degrees per g of
+%      speeding up or braking (nose down when braking, up when speeding
+%      up). Default 1.5 (a typical sedan: 1 to 2).
+%
+%      RollPerG: the body's roll on its wheels, in degrees per g of
+%      sideways acceleration (leaning to the outside of the turn).
+%      Default 4 (a typical sedan: 3 to 6).
+%
+%      BodyMotionScale: multiplies both, to make the body's motion easier
+%      to see (for example 3); 0 for a rigid body. Default 1.
+%
 %      FigNum: a figure to plot the path, speed, and steer angle. Empty
 %      (default) for no figure; -1 for fast mode (no input checks).
 %
 % OUTPUTS:
 %
 %      motion: a structure with Instance, Time (K x 1), Pose (K x 3, [x
-%      y yaw]), WheelSpin (K x 4, rad), SteerAngle (K x 2, [left right]
-%      front tires, rad), LightStates (K x 1; Tail 'brake' while slowing
+%      y yaw]; with Road, K x 6, [x y z roll pitch yaw]), WheelSpin (K x 4, rad), SteerAngle (K x 2, [left right]
+%      front tires, rad), BodyRoll, BodyPitch, BodyHeave (K x 1: the
+%      body on its wheels, rad and m; heave 0), LightStates (K x 1; Tail 'brake' while slowing
 %      by more than 0.3 m/s^2), Speed (K x 1), and Distance (K x 1, along
 %      the path).
 %
@@ -73,6 +95,10 @@ function motion = fcn_AnimateCar3D_fillPathMotion(pathXY, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillPathMotion
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillPathMotion
+%   % * Added the Road option: the vehicle on the road's surface (z, roll, pitch)
 
 % TO-DO:
 %
@@ -95,6 +121,10 @@ arguments
     options.StartTime = 0         % seconds
     options.Instance = 'ego'      % the object's name
     options.VehicleSpec = []      % fcn_CarMesh3D_fillVehicleSpec; [] for 'genericSedan'
+    options.Road = []             % a road from fcn_AnimateCar3D_fillRoad: on its surface (z, roll, pitch)
+    options.PitchPerG = 1.5       % degrees of body pitch per g, speeding up or braking
+    options.RollPerG = 4          % degrees of body roll per g sideways
+    options.BodyMotionScale = 1   % multiplies both (3 to exaggerate; 0 for a rigid body)
     options.FigNum = []           % figure to plot; -1 for fast mode
 end
 
@@ -167,6 +197,15 @@ if 0==flag_max_speed
         end
         if ~(ischar(options.Instance) || isstring(options.Instance))
             error('Instance must be text');
+        end
+        bodyNames = {'PitchPerG','RollPerG','BodyMotionScale'};
+        for ith_name = 1:numel(bodyNames)
+            if ~(isnumeric(options.(bodyNames{ith_name})) && isscalar(options.(bodyNames{ith_name})) && options.(bodyNames{ith_name}) >= 0)
+                error('%s must be a number, 0 or more', bodyNames{ith_name});
+            end
+        end
+        if ~isempty(options.Road) && ~(isstruct(options.Road) && (isfield(options.Road,'PlanView') || isfield(options.Road,'Roads')))
+            error('Road must come from fcn_AnimateCar3D_fillRoad, or be []');
         end
     end
 end
@@ -253,8 +292,38 @@ lightStates = repmat(struct('Headlights','low', 'TurnLeft',false, 'TurnRight',fa
     'Tail','on', 'Backup',false), numel(timeValues), 1);
 [lightStates(acceleration < -0.3).Tail] = deal('brake');
 
-motion = struct('Instance',char(options.Instance), 'Time',timeValues + options.StartTime, 'Pose',[x y yaw], ...
-    'WheelSpin',wheelSpin, 'SteerAngle',steerAngle, 'LightStates',lightStates, 'Speed',motionSpeed, 'Distance',distance);
+%%%% The body on its wheels (the sprung mass): pitch from speeding up and
+%%%% braking, roll from turning (accelerations smoothed over about 0.5 s)
+smoothRows = max(1, round(0.5/options.TimeStep));
+if numel(timeValues) > 1
+    yawRate = gradient(unwrap(yaw(:)))./gradient(timeValues(:));
+else
+    yawRate = 0;
+end
+forwardAccel = movmean(acceleration(:), smoothRows);
+sidewaysAccel = movmean(motionSpeed(:).*yawRate, smoothRows);
+bodyPitch = -options.BodyMotionScale*deg2rad(options.PitchPerG)*forwardAccel/9.81;   % (+ nose down: braking)
+bodyRoll = options.BodyMotionScale*deg2rad(options.RollPerG)*sidewaysAccel/9.81;    % (+ right side down: a left turn)
+bodyPitch = bodyPitch.*ones(numel(timeValues),1);
+bodyRoll = bodyRoll.*ones(numel(timeValues),1);
+
+%%%% On the road's surface: height, pitch (from ahead and behind), roll
+%%%% (from left and right)
+pose = [x(:) y(:) yaw(:)];
+if ~isempty(options.Road)
+    heading = [cos(yaw(:)) sin(yaw(:))];
+    leftward = [-sin(yaw(:)) cos(yaw(:))];
+    probeXY = repmat([x(:) y(:)], 5, 1) + kron([0; 1.4; -1.4; 0; 0], ones(numel(x),1)).*repmat(heading, 5, 1) ...
+        + kron([0; 0; 0; 0.8; -0.8], ones(numel(x),1)).*repmat(leftward, 5, 1);
+    probeZ = reshape(fcn_AnimateCar3D_getRoadHeight(options.Road, probeXY, FigNum=-1), numel(x), 5);
+    pitch = -atan((probeZ(:,2) - probeZ(:,3))/2.8);
+    roll = atan((probeZ(:,4) - probeZ(:,5))/1.6);
+    pose = [x(:) y(:) probeZ(:,1) roll pitch yaw(:)];
+end
+
+motion = struct('Instance',char(options.Instance), 'Time',timeValues + options.StartTime, 'Pose',pose, ...
+    'WheelSpin',wheelSpin, 'SteerAngle',steerAngle, 'BodyRoll',bodyRoll, 'BodyPitch',bodyPitch, 'BodyHeave',zeros(numel(timeValues),1), ...
+    'LightStates',lightStates, 'Speed',motionSpeed, 'Distance',distance);
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

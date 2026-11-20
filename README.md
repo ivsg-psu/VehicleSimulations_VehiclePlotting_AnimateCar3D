@@ -38,10 +38,12 @@ fcn_AnimateCar3D_playScenario(scenario);                          % the whole an
 | 1. `'laneChange'` | One vehicle on the two-lane road changes to the left lane at a constant 15 m/s, signaling first | `Images/example1_laneChange.gif` |
 | 2. `'curvyConstantSpeed'` | One vehicle follows the curvy road's lane at a constant 12 m/s; the front tires steer with the curves | `Images/example2_curvyConstantSpeed.gif` |
 | 3. `'curvyVaryingSpeed'` | The same path, slowing for each curve (no more than 2 m/s^2 sideways), with brake lights, and speeding up on the straights | `Images/example3_curvyVaryingSpeed.gif` |
+| 4. `'curvyHills'` | The curvy road with hills (up to 6%) and banked curves, at a constant 12 m/s: the vehicle rides on the road's surface, its body leans in the curves, and the ground is drawn around the road | `Images/example4_curvyHills.gif` |
+| 5. `'mountainRoad'` | About 2 km of winding mountain road with hairpins, up to a summit and down (up to 12%, easing on tight curves), slowing for each curve; the body's pitch and roll exaggerated 6 times; the camera tilts with the road | `Images/example5_mountainRoad.gif` |
 
-![Example 1](Images/example1_laneChange.gif) ![Example 3](Images/example3_curvyVaryingSpeed.gif)
+![Example 1](Images/example1_laneChange.gif) ![Example 3](Images/example3_curvyVaryingSpeed.gif) ![Example 5](Images/example5_mountainRoad.gif)
 
-`fcn_AnimateCar3D_fillExampleScenario()` with no inputs lists the examples. To build your own: `fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=...)` turns any path (for example, a lane centerline from the scene's centerline options) and a speed (a value, one per point, or a function of distance) into a full motion: pose, wheel spin, Ackermann steering, and brake lights. Examples with several objects (passing, following, stopping for a pedestrian at a crosswalk) come next.
+`fcn_AnimateCar3D_fillExampleScenario()` with no inputs lists the examples. To build your own: `fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=...)` turns any path (for example, a lane centerline from the scene's centerline options) and a speed (a value, one per point, or a function of distance) into a full motion: pose, wheel spin, Ackermann steering, brake lights, and the body's pitch and roll on its wheels (`PitchPerG`, 1.5 degrees per g of braking or speeding up; `RollPerG`, 4 degrees per g sideways; `BodyMotionScale` to exaggerate them). With `Road=road`, the pose is put on the road's surface: `[x y z roll pitch yaw]` from the heights under, ahead of, behind, and beside the vehicle. `fcn_AnimateCar3D_playScenario` draws the ground around a road with hills or banking (`Terrain`), keeps the camera at the followed vehicle's height, and can tilt it (`CameraPitch`: `'none'`, level, the default; `'vehicle'`, with the vehicle's pitch; `'road'`, with the road's grade where the camera is). Examples with several objects (passing, following, stopping for a pedestrian at a crosswalk) come next.
 
 
 1. Put this folder somewhere whose path has **no minus signs**.
@@ -420,9 +422,11 @@ Most example scenarios need a road under them. Three prototype functions describ
 
 | Function | What it does |
 |---|---|
-| `fcn_AnimateCar3D_fillRoad` | Fills a road from a preset (`'twoLane'`, `'curvy'`, `'interstate'`, `'urbanStreet'`, `'neighborhood'`) with options (length, lane width, lanes each way, center mark, start pose, random seed, building setback and sides, block length) |
-| `fcn_AnimateCar3D_getRoadPoints` | World points `[x y heading]` from road coordinates: s along the reference line, t across it (left positive), or a lane and an offset, as an OpenSCENARIO `LanePosition`. To place a vehicle, use `DrivingLane` (the k-th driving lane: -1 is the first on the right), which skips medians and shoulders; OpenDRIVE's `LaneID` -1 is the first lane of any type (on the interstate, the median) |
+| `fcn_AnimateCar3D_fillRoad` | Fills a road from a preset (`'twoLane'`, `'curvy'`, `'mountain'`, `'interstate'`, `'urbanStreet'`, `'neighborhood'`, `'intersection'`) with options (length, lane width, lanes each way, center mark, start pose, random seed, building setback and sides, block length, and heights: `Elevation`, `MaxGrade`, `MaxGradeChange`, `CurveGradeRadius`, `MaxHeightRange`, `CrossSlope`, `MaxCrossSlope`; see [Hills, banking, and the ground](#hills-banking-and-the-ground)) |
+| `fcn_AnimateCar3D_getRoadPoints` | World points `[x y heading]` (and the surface's height and its grade and cross-slope angles) from road coordinates: s along the reference line, t across it (left positive), or a lane and an offset, as an OpenSCENARIO `LanePosition`. To place a vehicle, use `DrivingLane` (the k-th driving lane: -1 is the first on the right), which skips medians and shoulders; OpenDRIVE's `LaneID` -1 is the first lane of any type (on the interstate, the median) |
 | `fcn_AnimateCar3D_fillCenterlineOptions` | The paths a vehicle can take from a starting point (default: the scene's fixed `EgoStart`), as lane centerlines in XY, with headings, distances, and routes: see [Centerline options](#centerline-options-for-path-following-and-decision-making-tests) |
+| `fcn_AnimateCar3D_getRoadHeight` | The road's surface height under any XY points (and each point's s, t, and road), for placing things on hills |
+| `fcn_AnimateCar3D_fillTerrain`, `fcn_AnimateCar3D_plotTerrain` | The ground around a road: fitted to the road, or a mountain the road is cut into; grass and block trees; full grid near the road, coarse farther out |
 | `fcn_AnimateCar3D_plotRoad` | Draws the lane surfaces (colored by lane type, with curb steps), the road marks, and the road objects, in three patches (plus one per opacity for see-through objects: `NearSideAlpha`, 0.3, for near-side buildings and trees; `BuildingAlpha` for all buildings). Curves are sampled every 2 m, straight lines every 50 m: the two-lane road is 74 faces, the neighborhood (1200 m, with houses) about 2,400 |
 
 **How a road is described** (OpenDRIVE terms in brackets):
@@ -435,6 +439,19 @@ Most example scenarios need a road under them. Three prototype functions describ
 - **Procedural, and repeatable:** the lane layouts are fixed by each preset and its options; buildings, houses, parks, and pedestrians are placed at random from `Seed`, so the same `Seed` always gives the same scene, and another `Seed` a different one.
 
 Colors are flat and simple. Only the road marks and crosswalks are white or yellow, so nothing else looks like a lane line.
+
+### Hills, banking, and the ground
+
+Roads can rise and fall and be banked, as in OpenDRIVE (`<elevationProfile>` and `<lateralProfile>`, both cubics in s): the surface's height is `z = elevation(s) + t*tan(superelevation(s))`.
+
+![Mountain road](Images/heights_prototype.png)
+
+- **Hills** (`Elevation='hilly'`) are made the way road designers make them, from the grade: the grade is set at points about 50 m apart (spaced at random, from 20 to 100 m), never passes `MaxGrade` (6%; 12% for the mountain road), and changes by no more than `MaxGradeChange` per 100 m of road (0.35, about 20 degrees, close to AASHTO design for 25 mph roads; above 0.5, about the steepest in US federal guidance, a warning, and with `ConfirmSteep=true` a dialog). The height follows from the grade. `MaxHeightRange` caps the height from lowest to highest.
+- **Grade eases on tight curves** (`CurveGradeRadius`, 150 m), as on mountain roads, so that most of the climbing is on the straighter parts: on a curve of radius R, the grade is at most `MaxGrade*R/150` (never below 20% of `MaxGrade`): a 20 m hairpin on a 12% road is at most 2.4%.
+- **Mountain** (`Elevation='mountain'`): uphill all the way to a summit at mid-road, then downhill all the way.
+- **Banking** (`CrossSlope='banked'`): down to the inside of each curve, in proportion to its curvature, `MaxCrossSlope` (6%) at the tightest.
+- **The mountain road** (`Preset='mountain'`): about 2 km of winding road (bends of 30 to 120 m radius, about one in six a hairpin of 18 to 25 m, in switchback pairs), never closer than 30 m to itself, mountain heights and banking by default, at random from `Seed`.
+- **The ground** (`fcn_AnimateCar3D_fillTerrain`): held just under the road and smooth everywhere else. For the mountain road, a mountain (`Shape='mountain'`): its peak rises `PeakHeight` (250 m) above the road's summit, beside it, and the road is cut and filled into its side. Grass with gentle shading, block trees kept clear of the road (see-through on the near side), the full grid within `NearDistance` (60 m) of the road and a coarse one farther out (about 4 times fewer faces). `fcn_AnimateCar3D_plotRoad`'s `ShowBanks` draws simple grassy banks instead, for a road without the ground.
 
 ### Centerline options (for path-following and decision-making tests)
 
@@ -456,7 +473,8 @@ Each option (a cell of the cell array) has `Name`, `Description`, `XY` (N x 2, a
 | Scene | Road | Status |
 |---|---|---|
 | **Two-lane road** | straight, undivided, one 3.6 m lane each way; broken yellow center line (`CenterMark='solid solid'` for no passing); solid white edge lines; 1.8 m shoulders; grass | done: `'twoLane'` |
-| **Curvy road** | the same, curving left (60 m radius) and right (50 m), joined by spirals | done: `'curvy'` |
+| **Curvy road** | the same, curving left (60 m radius) and right (50 m), joined by spirals; with `Elevation='hilly'` and `CrossSlope='banked'`, hills and banked curves | done: `'curvy'` |
+| **Mountain road** | about 2 km, winding, with hairpins; uphill to a summit and down (up to 12%, easing on tight curves); banked; a mountain around it | done: `'mountain'` |
 | **Interstate** | divided, 4 lanes each way (`LanesEachWay`); broken white lane lines; solid yellow inside and solid white outside edge lines; 1.2 m inside and 3 m outside shoulders; a concrete (Jersey) barrier on the median | done: `'interstate'` |
 | **Urban street** | two lanes, double yellow line; curbs 0.15 m high; 2.5 m sidewalks; a crosswalk; block trees; buildings made at random (repeatably, from `Seed`), occasional pedestrians standing on the sidewalks, set back `BuildingSetback` (6 m) behind the sidewalk, on both sides (`BuildingSides`). The far side is tall (6 to 30 m). The near side (the side of traffic in the right lanes, where a following camera is) is low, mostly one story (3.5 to 4.5 m) with about 1 in 7 two-story (6.5 to 7.5 m), and `fcn_AnimateCar3D_plotRoad` draws its buildings and street trees see-through (`NearSideAlpha`, 0.3), so the camera sees through and over them. Pedestrians are scenario objects, not road objects | street done: `'urbanStreet'`; cross streets wait for intersections |
 | **Neighborhood** | two lanes, no center line, 1200 m (three blocks); curbs, a grass strip with street trees, sidewalks, front lawns; small houses on lots about 20 m wide, with an occasional park (a lawn with block trees); occasional pedestrians standing on the sidewalks; a crosswalk at the end of each block (`BlockLength`, 400 m); houses on the far side by default (`BuildingSides`; near-side houses are low and see-through, as on the urban street), `BuildingSetback` (6 m) behind the sidewalk | done: `'neighborhood'` |

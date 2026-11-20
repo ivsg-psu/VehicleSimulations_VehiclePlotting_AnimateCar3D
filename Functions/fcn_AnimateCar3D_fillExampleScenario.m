@@ -20,6 +20,18 @@ function scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName, options)
 %                         speeding up at 1.5 m/s^2 and braking at 2 m/s^2;
 %                         brake lights while slowing)
 %
+% ONE VEHICLE ON HILLS (the vehicle pitches and rolls with the road; the
+% ground is drawn around it):
+%
+%   'curvyHills'          the curvy road with hills and banked curves:
+%                         following the right lane's center at 12 m/s
+%   'mountainRoad'        the mountain road: up to the summit and down,
+%                         grades up to 12%, banked curves and hairpins,
+%                         slowing for the curves as above (hairpins at
+%                         about 6 m/s); the body's pitch and roll on its
+%                         wheels exaggerated 6 times so they show; the
+%                         camera tilts with the road (CameraPitch 'road')
+%
 % Each vehicle is the CarMesh3D sample car ('sample'), named 'ego'.
 %
 % FORMAT:
@@ -146,7 +158,7 @@ if 0==flag_max_speed
 
 
         % Check the scenario name
-        exampleNames = {'laneChange','curvyConstantSpeed','curvyVaryingSpeed'};
+        exampleNames = {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'};
         if ~(ischar(scenarioName) || isstring(scenarioName)) || (~isempty(char(scenarioName)) && ~any(strcmp(char(scenarioName), exampleNames)))
             error('scenarioName must be one of: %s', strjoin(exampleNames, ', '));
         end
@@ -175,10 +187,12 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-exampleList = struct('Name',{'laneChange','curvyConstantSpeed','curvyVaryingSpeed'}, ...
+exampleList = struct('Name',{'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}, ...
     'Description',{'One vehicle on the two-lane road: a lane change to the left at a constant 15 m/s', ...
                    'One vehicle on the curvy road, following its lane at a constant 12 m/s', ...
-                   'One vehicle on the curvy road, following its lane, slowing for the curves'});
+                   'One vehicle on the curvy road, following its lane, slowing for the curves', ...
+                   'One vehicle on the curvy road with hills and banked curves, at a constant 12 m/s', ...
+                   'One vehicle up and over the mountain road (12% grades, banking, hairpins), slowing for the curves'});
 
 %%%% No name: the list
 if isempty(char(scenarioName))
@@ -224,12 +238,25 @@ switch scenarioName
         pathS = centerlineOptions{1}.S;
         egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 20, 2.0, 1.5, 2.0, 12), ...
             Instance='ego', FigNum=-1);
+    case 'curvyHills'
+        roadPreset = 'curvy';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Seed=options.Seed, Elevation='hilly', ...
+            CrossSlope='banked', FigNum=-1);
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(centerlineOptions{1}.XY, Speed=12, Instance='ego', Road=road, FigNum=-1);
+    case 'mountainRoad'
+        roadPreset = 'mountain';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Seed=options.Seed, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY;
+        pathS = centerlineOptions{1}.S;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 20, 2.0, 1.5, 2.0, 12), ...
+            Instance='ego', Road=road, BodyMotionScale=6, FigNum=-1);
 end
 egoMotion = rmfield(egoMotion, {'Speed','Distance'});
 description = exampleList(strcmp({exampleList.Name}, scenarioName)).Description;
 scenario = struct('Name',scenarioName, 'Description',description, 'RoadPreset',roadPreset, 'Seed',options.Seed, ...
     'Road',road, 'CenterlineOptions',{centerlineOptions}, 'SceneList',fcn_AnimateCar3D_loadSceneList(egoRow, FigNum=-1), ...
-    'Motions',{{egoMotion}}, 'Duration',egoMotion.Time(end) - egoMotion.Time(1), 'MeshIDs',{{'sample'}});
+    'Motions',{{egoMotion}}, 'Duration',egoMotion.Time(end) - egoMotion.Time(1), 'MeshIDs',{{'sample'}}, ...
+    'CameraPitch',fcn_INTERNAL_cameraPitch(scenarioName));
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -268,6 +295,16 @@ end % Ends main function
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% fcn_INTERNAL_cameraPitch
+function cameraPitch = fcn_INTERNAL_cameraPitch(scenarioName)
+% How fcn_AnimateCar3D_playScenario tilts the camera for this example:
+% with the road's grade at the camera on the mountain road, else level
+cameraPitch = 'none';
+if strcmp(scenarioName, 'mountainRoad')
+    cameraPitch = 'road';
+end
+end % Ends fcn_INTERNAL_cameraPitch
 
 %% fcn_INTERNAL_curveSpeeds
 function pathSpeed = fcn_INTERNAL_curveSpeeds(pathXY, pathS, topSpeed, sidewaysLimit, speedUpLimit, brakeLimit, startSpeed)

@@ -16,6 +16,7 @@
 %       scenario = fcn_AnimateCar3D_fillExampleScenario('laneChange');
 %       scenario.CenterlineOptions{2}.XY       % the left lane's center, in XY
 %       scenario.Motions{1}.Pose               % the ego's [x y yaw] over time
+%                                              % (on hills: [x y z roll pitch yaw])
 %
 % This script was written on 2026_11_20 by S. Brennan (drafted with
 % Claude)
@@ -27,6 +28,10 @@
 % - In script_examples_AnimateCar3D
 %   % * Wrote the code originally (drafted with Claude): examples 1 to 3,
 %   %   one vehicle, one maneuver each
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In script_examples_AnimateCar3D
+%   % * Added examples 4 and 5, on hills: the curvy road with hills and
+%   %   banking, and the mountain road
 
 % TO-DO:
 %
@@ -74,3 +79,34 @@ if flag_saveGifs
     gifFile = fullfile(pwd, 'Images', 'example3_curvyVaryingSpeed.gif');
 end
 fcn_AnimateCar3D_playScenario(scenario, GifFile=gifFile, FigNum=3);
+
+
+%% Example 4. One vehicle on hills: the curvy road with hills and banked curves
+% The same curvy road, now rising and falling (grades up to 6%) and
+% banked down to the inside of each curve. The ego follows its lane at
+% 12 m/s; its pose comes from the road's surface (height, pitch, roll),
+% and its body leans on its wheels in the curves. The ground is drawn
+% around the road (fcn_AnimateCar3D_fillTerrain), and the camera rises
+% and falls with the ego.
+scenario = fcn_AnimateCar3D_fillExampleScenario('curvyHills');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example4_curvyHills.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, GifFile=gifFile, FigNum=4);
+
+
+%% Example 5. One vehicle on a mountain road
+% About 2 km of winding road with hairpins, climbing all the way to a
+% summit and descending all the way down (grades up to 12%, easing on
+% the tight curves), banked, through a mountain. The ego slows for each
+% curve (about 6 m/s in the tightest). Its body's pitch and roll on its
+% wheels are exaggerated 6 times so they show, and the camera tilts with
+% the road's grade where the camera is (CameraPitch 'road'). The GIF
+% takes a frame every 0.5 s (the drive is about 2.5 minutes).
+scenario = fcn_AnimateCar3D_fillExampleScenario('mountainRoad');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example5_mountainRoad.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.5, GifDelay=0.1, GifFile=gifFile, FigNum=5);

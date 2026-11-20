@@ -1,4 +1,4 @@
-function [points, tValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues, options)
+function [points, tValues, zValues, surfaceAngles] = fcn_AnimateCar3D_getRoadPoints(road, sValues, options)
 % fcn_AnimateCar3D_getRoadPoints
 
 % Finds world points on a road from road coordinates, as in ASAM
@@ -12,9 +12,16 @@ function [points, tValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues, optio
 % spiral, whose curvature changes linearly along it), each starting at
 % its own s, x, y, and heading (see fcn_AnimateCar3D_fillRoad).
 %
+% Heights, as in OpenDRIVE: the road surface is at
+%       z = elevation(s) + t*tan(superelevation(s))
+% with the elevation (road.ElevationProfile) and the superelevation, a
+% roll angle (road.LateralProfile.Superelevation), each a cubic in the
+% distance from its own start. A road without them is flat at z = 0.
+% (Lane heights, such as curbs, are on top of this surface.)
+%
 % FORMAT:
 %
-%       [points, tValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues,...
+%       [points, tValues, zValues, surfaceAngles] = fcn_AnimateCar3D_getRoadPoints(road, sValues,...
 %           (T=t), (LaneID=laneID), (DrivingLane=k), (LaneEdge=edge),...
 %           (FigNum=figNum))
 %
@@ -54,6 +61,12 @@ function [points, tValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues, optio
 %      reference line's at that s.
 %
 %      tValues: N x 1, each point's t from the reference line.
+%
+%      zValues: N x 1, the road surface's height at each point.
+%
+%      surfaceAngles: N x 2, [grade superelevation] at each point: the
+%      angle of the road's rise along s (positive uphill along s), and its
+%      roll (positive: the left side, +t, higher), radians.
 %
 % DEPENDENCIES:
 %
@@ -251,6 +264,12 @@ end
 tValues = tOffset;
 points = [reference(:,1) - tValues.*sin(reference(:,3)), reference(:,2) + tValues.*cos(reference(:,3)), reference(:,3)];
 
+%%%% Heights: elevation along s, and the superelevation's roll across
+[elevation, elevationRate] = fcn_INTERNAL_cubics(fcn_INTERNAL_field(road, 'ElevationProfile'), sValues);
+superelevation = fcn_INTERNAL_cubics(fcn_INTERNAL_superelevation(road), sValues);
+zValues = elevation + tValues.*tan(superelevation);
+surfaceAngles = [atan(elevationRate), superelevation];
+
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %   _____       _
@@ -332,6 +351,43 @@ switch geometry.Type
         error('Geometry type ''%s'' is not known (line, arc, or spiral)', geometry.Type);
 end
 end % Ends fcn_INTERNAL_geometryPoints
+
+%% fcn_INTERNAL_field
+function records = fcn_INTERNAL_field(road, fieldName)
+% A road's field, or [] if it has none
+records = [];
+if isfield(road, fieldName)
+    records = road.(fieldName);
+end
+end % Ends fcn_INTERNAL_field
+
+%% fcn_INTERNAL_superelevation
+function records = fcn_INTERNAL_superelevation(road)
+% A road's superelevation records, or [] if it has none
+records = [];
+if isfield(road, 'LateralProfile') && isstruct(road.LateralProfile) && isfield(road.LateralProfile, 'Superelevation')
+    records = road.LateralProfile.Superelevation;
+end
+end % Ends fcn_INTERNAL_superelevation
+
+%% fcn_INTERNAL_cubics
+function [values, rates] = fcn_INTERNAL_cubics(records, sValues)
+% Piecewise cubics (OpenDRIVE: S, A, B, C, D; value = A + B*ds + C*ds^2
+% + D*ds^3, ds from S), and their rates of change; 0 if none
+values = zeros(size(sValues));
+rates = zeros(size(sValues));
+if isempty(records)
+    return;
+end
+pieceIndex = max(sum(sValues >= [records.S], 2), 1);
+for ith_piece = unique(pieceIndex)'
+    rows = pieceIndex==ith_piece;
+    piece = records(ith_piece);
+    ds = sValues(rows) - piece.S;
+    values(rows) = piece.A + piece.B*ds + piece.C*ds.^2 + piece.D*ds.^3;
+    rates(rows) = piece.B + 2*piece.C*ds + 3*piece.D*ds.^2;
+end
+end % Ends fcn_INTERNAL_cubics
 
 %% fcn_INTERNAL_laneT
 function tValues = fcn_INTERNAL_laneT(laneSections, sValues, laneID, laneEdge)

@@ -225,6 +225,93 @@ assert(road.EgoStart.LaneID==-3 && road.EgoStart.S==0);
 [~, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset='twoLane');
 assert(iscell(centerlineOptions) && numel(centerlineOptions)==2);
 
+%% TEST case: Heights: hilly (grade within limits) and banked (down to the inside of curves)
+figNum = 20009;
+titleString = sprintf('TEST case: Heights: hilly (grade within limits) and banked (down to the inside of curves)');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+flatRoad = fcn_AnimateCar3D_fillRoad(Preset='curvy');
+[~, ~, flatZ] = fcn_AnimateCar3D_getRoadPoints(flatRoad, (0:1:flatRoad.Length)', T=3);
+assert(all(flatZ==0));
+hillyRoad = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='hilly', CurveGradeRadius=0);   % (no curve knots: random spacing only)
+sFine = (0:0.5:hillyRoad.Length)';
+[~, ~, hillZ, hillAngles] = fcn_AnimateCar3D_getRoadPoints(hillyRoad, sFine);
+assert(max(abs(tan(hillAngles(:,1)))) <= 0.06 + 1e-9 && max(hillZ) - min(hillZ) > 1);
+gradeChange = diff(tan(hillAngles(:,1)))./diff(sFine)*100;
+assert(max(abs(gradeChange)) <= 0.35 + 1e-6);                            % (grade change per 100 m)
+% (knots spaced randomly: the grade's corners are not all 50 m apart)
+knotSpacing = diff([hillyRoad.ElevationProfile.S]);
+assert(numel(unique(round(knotSpacing))) > 2 && all(knotSpacing >= 20 - 1e-9) && all(knotSpacing <= 120));
+gentle = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='hilly', MaxGradeChange=0.02);
+[~, ~, ~, gentleAngles] = fcn_AnimateCar3D_getRoadPoints(gentle, sFine);
+assert(max(abs(diff(tan(gentleAngles(:,1)))./diff(sFine)*100)) <= 0.02 + 1e-6);
+lastwarn('');
+evalc('fcn_AnimateCar3D_fillRoad(Preset=''curvy'', Elevation=''hilly'', MaxGradeChange=0.8);');   % (the warning, not shown)
+[~, warningID] = lastwarn;
+assert(strcmp(warningID, 'AnimateCar3D:fillRoad:steepGradeChange'));
+assert(abs(hillZ(1)) < 1e-12 && abs(hillAngles(1,1)) < 1e-12);           % (starts at 0, level)
+mountain = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='mountain');
+[~, ~, mountainZ, mountainAngles] = fcn_AnimateCar3D_getRoadPoints(mountain, sFine);
+[~, peak] = max(mountainZ);
+assert(abs(sFine(peak) - mountain.Length/2) < 60 && max(mountainZ) > 5 && max(abs(tan(mountainAngles(:,1)))) <= 0.06 + 1e-9);
+capped = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='hilly', MaxHeightRange=1);
+[~, ~, cappedZ] = fcn_AnimateCar3D_getRoadPoints(capped, sFine);
+assert(max(cappedZ) - min(cappedZ) <= 1 + 1e-6);
+gentle = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='hilly', MaxGrade=0.02);
+[~, ~, ~, gentleAngles] = fcn_AnimateCar3D_getRoadPoints(gentle, sFine);
+assert(max(abs(tan(gentleAngles(:,1)))) <= 0.02 + 1e-9);
+bankedRoad = fcn_AnimateCar3D_fillRoad(Preset='curvy', CrossSlope='banked');
+% (60 m in: a left curve; 250 m in: a right curve; at 20 m: straight)
+[~, ~, ~, bankAngles] = fcn_AnimateCar3D_getRoadPoints(bankedRoad, [20; 100; 230]);
+assert(abs(bankAngles(1,2)) < 1e-12 && bankAngles(2,2) < 0 && bankAngles(3,2) > 0);
+assert(abs(tan(bankAngles(3,2)) - 0.06) < 1e-9);                         % (the tightest curve: 50 m radius)
+[~, ~, insideZ] = fcn_AnimateCar3D_getRoadPoints(bankedRoad, [100; 100], T=[3; -3]);
+assert(insideZ(1) < insideZ(2));                                         % (left curve: the left side lower)
+
+%% TEST case: The mountain road: long, winding, climbing and descending, clear of itself
+figNum = 20010;
+titleString = sprintf('TEST case: The mountain road: long, winding, climbing and descending, clear of itself');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+mountainRoad = fcn_AnimateCar3D_fillRoad(Preset='mountain');
+assert(mountainRoad.Length >= 2000 && mountainRoad.Length < 2400);
+sAlong = (0:5:mountainRoad.Length)';
+[points, ~, heights, angles] = fcn_AnimateCar3D_getRoadPoints(mountainRoad, sAlong);
+assert(max(heights) > 60 && max(abs(tan(angles(:,1)))) <= 0.12 + 1e-9 && max(abs(tan(angles(:,1)))) > 0.09 && any(abs(angles(:,2)) > 0.02));   % (climbs at up to 12%; banked)
+assert(strcmp(mountainRoad.TerrainShape, 'mountain'));
+% (uphill all the way to the summit, downhill all the way after)
+sClimb = (100:5:mountainRoad.Length/2 - 100)';
+sDescend = (mountainRoad.Length/2 + 100:5:mountainRoad.Length - 100)';
+[~, ~, ~, climbAngles] = fcn_AnimateCar3D_getRoadPoints(mountainRoad, sClimb);
+[~, ~, ~, descendAngles] = fcn_AnimateCar3D_getRoadPoints(mountainRoad, sDescend);
+assert(all(climbAngles(:,1) > 0) && all(descendAngles(:,1) < 0));
+% (the grade eases on tight curves: on each arc, at most 12% * R/150, and
+% at least 20% of 12%)
+for ith_geometry = 1:numel(mountainRoad.PlanView)
+    geometry = mountainRoad.PlanView(ith_geometry);
+    if strcmp(geometry.Type, 'arc') && abs(geometry.Curvature) > 1/150
+        sArc = linspace(geometry.S, geometry.S + geometry.Length, 20)';
+        [~, ~, ~, arcAngles] = fcn_AnimateCar3D_getRoadPoints(mountainRoad, sArc);
+        arcLimit = 0.12*max(0.2, 1/(abs(geometry.Curvature)*150));
+        assert(max(abs(tan(arcAngles(:,1)))) <= arcLimit + 1e-6);
+    end
+end
+% (and without easing, the hairpins are as steep as the rest)
+unEased = fcn_AnimateCar3D_fillRoad(Preset='mountain', CurveGradeRadius=0);
+hairpin = find(arrayfun(@(g) strcmp(g.Type,'arc') && abs(g.Curvature) > 1/30, unEased.PlanView), 1);
+sArc = linspace(unEased.PlanView(hairpin).S, unEased.PlanView(hairpin).S + unEased.PlanView(hairpin).Length, 20)';
+[~, ~, ~, arcAngles] = fcn_AnimateCar3D_getRoadPoints(unEased, sArc);
+assert(max(abs(tan(arcAngles(:,1)))) > 0.04);
+farApart = abs(sAlong - sAlong') > 150;
+distances = hypot(points(:,1) - points(:,1)', points(:,2) - points(:,2)');
+assert(min(distances(farApart)) > 25);
+assert(sum(strcmp({mountainRoad.PlanView.Type}, 'arc')) > 10 && strcmp(mountainRoad.LaneSections.Center.RoadMark.Type, 'solid solid'));
+flatMountain = fcn_AnimateCar3D_fillRoad(Preset='mountain', Elevation='flat', CrossSlope='none', Length=500, Seed=3);
+[~, ~, flatHeights] = fcn_AnimateCar3D_getRoadPoints(flatMountain, (0:5:flatMountain.Length)');
+assert(all(flatHeights==0));
+
 %% TEST case: Seed: the same Seed gives the same scene, whatever MATLAB's rng
 figNum = 20007;
 titleString = sprintf('TEST case: Seed: the same Seed gives the same scene, whatever MATLAB''s rng');

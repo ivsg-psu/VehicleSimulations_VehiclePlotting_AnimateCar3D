@@ -89,7 +89,7 @@ fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
 figure(figNum); close(figNum);
 
 exampleList = fcn_AnimateCar3D_fillExampleScenario();
-assert(isequal({exampleList.Name}, {'laneChange','curvyConstantSpeed','curvyVaryingSpeed'}));
+assert(isequal({exampleList.Name}, {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}));
 printed = evalc('fcn_AnimateCar3D_fillExampleScenario()');
 assert(contains(printed, 'curvyVaryingSpeed'));
 
@@ -109,9 +109,25 @@ speeds = hypot(diff(motion.Pose(:,1)), diff(motion.Pose(:,2)))./diff(motion.Time
 assert(max(speeds) > 16 && min(speeds) < 11);                            % (fast on straights, slower in curves)
 assert(any(strcmp({motion.LightStates.Tail}, 'brake')) && any(strcmp({motion.LightStates.Tail}, 'on')));
 % (no more than about 2 m/s^2 sideways)
-yawRate = gradient(unwrap(motion.Pose(:,3)))./gradient(motion.Time);
+yawRate = gradient(unwrap(motion.Pose(:,end)))./gradient(motion.Time);
 speedPerRow = [speeds; speeds(end)];
 assert(max(abs(yawRate(2:end-1).*speedPerRow(2:end-1))) < 2.5);
+
+%% TEST case: On hills: the curvy road with hills, and the mountain road
+figNum = 20003;
+titleString = sprintf('TEST case: On hills: the curvy road with hills, and the mountain road');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+hills = fcn_AnimateCar3D_fillExampleScenario('curvyHills');
+assert(size(hills.Motions{1}.Pose,2)==6 && max(abs(hills.Motions{1}.Pose(:,3))) > 2);
+mountain = fcn_AnimateCar3D_fillExampleScenario('mountainRoad');
+motion = mountain.Motions{1};
+assert(strcmp(mountain.RoadPreset,'mountain') && size(motion.Pose,2)==6 && max(motion.Pose(:,3)) > 50);
+assert(strcmp(mountain.CameraPitch,'road') && strcmp(hills.CameraPitch,'none'));
+assert(max(abs(motion.BodyRoll)) > 6*deg2rad(4)*1.5/9.81 && max(motion.BodyPitch) > 0 && min(motion.BodyPitch) < 0);   % (exaggerated body motion)
+speeds = hypot(diff(motion.Pose(:,1)), diff(motion.Pose(:,2)))./diff(motion.Time);
+assert(min(speeds) < 8 && max(speeds) > 15);                             % (slow in hairpins)
 
 %% Fast Mode Tests
 

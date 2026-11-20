@@ -105,6 +105,25 @@ playResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=5, CameraSettings=
 chasePosition = campos(playResult.Axes);
 assert(chasePosition(1) < 300 && abs(chasePosition(2) - 1.8) < 1e-6);   % (chase: straight behind)
 
+%% TEST case: On hills: ground drawn, camera at the object's height; tilting or level
+figNum = 20003;
+titleString = sprintf('TEST case: On hills: ground drawn, camera at the object''s height; tilting or level');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+hills = fcn_AnimateCar3D_fillExampleScenario('curvyHills', FigNum=-1);
+levelResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false, FigNum=figNum);
+assert(~isempty(findobj(levelResult.Axes, 'Tag', 'AnimateCar3D terrain')));
+assert(isequal(get(levelResult.Axes, 'CameraUpVector'), [0 0 1]));
+lastPose = interp1(hills.Motions{1}.Time, hills.Motions{1}.Pose, levelResult.Times(end));
+assert(abs(campos(levelResult.Axes)*[0;0;1] - (lastPose(3) + 10)) < 0.5);   % (10 m above the object)
+tiltResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false, CameraPitch=true, FigNum=figNum);
+upVector = get(tiltResult.Axes, 'CameraUpVector');
+assert(abs(norm(upVector) - 1) < 1e-9 && (abs(lastPose(5)) < 1e-6 || abs(upVector(3) - cos(lastPose(5))) < 1e-6));
+roadResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false, CameraPitch='road', FigNum=figNum);
+roadUp = get(roadResult.Axes, 'CameraUpVector');
+assert(abs(norm(roadUp) - 1) < 1e-9 && roadUp(3) > cos(atan(0.06)) - 1e-6);   % (tilted by a grade within the road's 6%)
+
 %% Fast Mode Tests
 
 %% Basic fast mode - FAST MODE (draws in the current figure)
@@ -134,6 +153,11 @@ close(figNum);
 
 %% Fail conditions
 % Each block below should throw an error. Change 1==0 to 1==1 to run them.
+
+%% FAIL case: An unknown camera pitch
+if 1==0
+    fcn_AnimateCar3D_playScenario(scenario, CameraPitch='sideways');
+end
 
 %% FAIL case: Not a scenario
 if 1==0

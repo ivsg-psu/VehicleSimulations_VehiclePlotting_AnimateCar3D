@@ -109,6 +109,21 @@ assert(abs(tFourth - (0.6 + 1.2 + 3*3.6 + 1.8)) < 1e-12);
 [~, tTwoLane] = fcn_AnimateCar3D_getRoadPoints(straightRoad, 10, DrivingLane=-1);
 assert(abs(tTwoLane + 1.8) < 1e-12);                                 % (the same as LaneID -1 here)
 
+%% TEST case: Heights: elevation along s, superelevation across
+figNum = 20005;
+titleString = sprintf('TEST case: Heights: elevation along s, superelevation across');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+slopedRoad = straightRoad;
+slopedRoad.ElevationProfile = struct('S',{0, 100}, 'A',{0, 5}, 'B',{0.05, 0}, 'C',{0, 0}, 'D',{0, 0});
+slopedRoad.LateralProfile = struct('Superelevation', struct('S',0, 'A',0.04, 'B',0, 'C',0, 'D',0));
+[~, tValues, zValues, surfaceAngles] = fcn_AnimateCar3D_getRoadPoints(slopedRoad, [50; 150], T=[0; -2]);
+assert(abs(zValues(1) - 2.5) < 1e-12 && abs(zValues(2) - (5 - 2*tan(0.04))) < 1e-12);
+assert(abs(surfaceAngles(1,1) - atan(0.05)) < 1e-12 && abs(surfaceAngles(2,1)) < 1e-12 && all(abs(surfaceAngles(:,2) - 0.04) < 1e-12));
+[~, ~, flatZ] = fcn_AnimateCar3D_getRoadPoints(straightRoad, [10; 20], T=3);
+assert(all(flatZ==0) && isequal(tValues, [0; -2]));
+
 %% TEST case: An arc: a quarter circle of radius 20 m
 figNum = 20002;
 titleString = sprintf('TEST case: An arc: a quarter circle of radius 20 m');

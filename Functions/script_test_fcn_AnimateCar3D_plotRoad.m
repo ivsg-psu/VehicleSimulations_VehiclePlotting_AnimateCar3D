@@ -137,6 +137,30 @@ assert(handlesB.NumFaces > handles.NumFaces);
 % The raised corner sidewalks reach the curb height
 assert(abs(max(handlesB.Surface.Vertices(:,3)) - 0.15) < 1e-9);
 
+%% TEST case: Hills and banking: the surface and marks follow the road's heights
+figNum = 20006;
+titleString = sprintf('TEST case: Hills and banking: the surface and marks follow the road''s heights');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+hillyRoad = fcn_AnimateCar3D_fillRoad(Preset='curvy', Elevation='hilly', CrossSlope='banked', FigNum=-1);
+handles = fcn_AnimateCar3D_plotRoad(hillyRoad, FigNum=figNum);
+% Each center-line mark vertex sits 2 cm above the road surface
+yellowFaces = all(abs(handles.Marks.FaceVertexCData - [0.96 0.76 0.12]) < 1e-9, 2);
+yellowVertices = unique(handles.Marks.Faces(yellowFaces,:));
+markXYZ = handles.Marks.Vertices(yellowVertices,:);
+referencePoints = fcn_AnimateCar3D_getRoadPoints(hillyRoad, (0:0.05:hillyRoad.Length)');
+[~, ~, referenceZ] = fcn_AnimateCar3D_getRoadPoints(hillyRoad, (0:0.05:hillyRoad.Length)');
+for ith_vertex = 1:10:size(markXYZ,1)
+    [~, nearest] = min(hypot(referencePoints(:,1) - markXYZ(ith_vertex,1), referencePoints(:,2) - markXYZ(ith_vertex,2)));
+    assert(abs(markXYZ(ith_vertex,3) - (referenceZ(nearest) + 0.02)) < 0.01);   % (within a line width of the center)
+end
+assert(max(handles.Surface.Vertices(:,3)) - min(handles.Surface.Vertices(:,3)) > 0.5);
+% (a level road stays sparse; a hilly straight is sampled finely)
+flat = fcn_AnimateCar3D_plotRoad(fcn_AnimateCar3D_fillRoad(Preset='twoLane', FigNum=-1), FigNum=figNum);
+hilly = fcn_AnimateCar3D_plotRoad(fcn_AnimateCar3D_fillRoad(Preset='twoLane', Elevation='hilly', FigNum=-1), FigNum=figNum);
+assert(hilly.NumFaces > 5*flat.NumFaces);
+
 %% TEST case: Pedestrians stand on the sidewalk, at sidewalk height
 figNum = 20005;
 titleString = sprintf('TEST case: Pedestrians stand on the sidewalk, at sidewalk height');

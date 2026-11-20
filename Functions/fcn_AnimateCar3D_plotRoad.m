@@ -18,7 +18,7 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 % FORMAT:
 %
 %       handles = fcn_AnimateCar3D_plotRoad(road, (SampleSpacing=meters),...
-%           (ShowObjects=flag), (BuildingAlpha=alpha),...
+%           (ShowObjects=flag), (ShowBanks=flag), (BuildingAlpha=alpha),...
 %           (NearSideAlpha=alpha), (Colors=colors),...
 %           (AxesHandle=axesHandle), (FigNum=figNum))
 %
@@ -32,6 +32,10 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 %      SampleSpacing: meters between samples along the road. Default 2.
 %
 %      ShowObjects: draw the road's objects. Default true.
+%
+%      ShowBanks: on a road above or below the ground (z = 0), a grassy
+%      bank from each road edge to the ground. Default true; false when
+%      the ground follows the road (fcn_AnimateCar3D_fillTerrain).
 %
 %      BuildingAlpha: the buildings' opacity, 0 to 1. Default 1 (solid).
 %      Below 1, the buildings are drawn in their own (fourth) patch, see-
@@ -104,6 +108,7 @@ arguments
     road
     options.SampleSpacing = 2      % meters between samples along the road
     options.ShowObjects = true     % draw the road's objects
+    options.ShowBanks = true       % grassy banks from raised or lowered road edges to the ground (z = 0)
     options.BuildingAlpha = 1      % buildings' opacity (below 1: see-through)
     options.NearSideAlpha = 0.3    % opacity of near-side (right) buildings and trees
     options.Colors = []            % colors to change, by name
@@ -234,7 +239,7 @@ for ith_road = 1:numel(roads)
         else
             sectionEnd = road.Length;
         end
-        sSamples = fcn_INTERNAL_sectionSamples(road.PlanView, section, sectionEnd, spacing);
+        sSamples = fcn_INTERNAL_sectionSamples(road.PlanView, section, sectionEnd, spacing, fcn_INTERNAL_isLevel(road));
         for sideLanes = {section.Right, section.Left}
             lanes = sideLanes{1};
             if isempty(lanes)
@@ -246,17 +251,22 @@ for ith_road = 1:numel(roads)
             for ith_lane = 1:numel(lanes)
                 thisLane = lanes(ith_lane);
                 laneColor = fcn_INTERNAL_laneColor(colors, thisLane.Type);
-                inner = fcn_AnimateCar3D_getRoadPoints(road, sSamples, LaneID=thisLane.ID, LaneEdge='inner', FigNum=-1);
-                outer = fcn_AnimateCar3D_getRoadPoints(road, sSamples, LaneID=thisLane.ID, LaneEdge='outer', FigNum=-1);
-                Nsamples = numel(sSamples);
-                innerPoints = [inner(:,1:2), thisLane.Height(1)*ones(Nsamples,1)];
-                outerPoints = [outer(:,1:2), thisLane.Height(2)*ones(Nsamples,1)];
+                [inner, ~, innerZ] = fcn_AnimateCar3D_getRoadPoints(road, sSamples, LaneID=thisLane.ID, LaneEdge='inner', FigNum=-1);
+                [outer, ~, outerZ] = fcn_AnimateCar3D_getRoadPoints(road, sSamples, LaneID=thisLane.ID, LaneEdge='outer', FigNum=-1);
+                innerPoints = [inner(:,1:2), innerZ + thisLane.Height(1)];
+                outerPoints = [outer(:,1:2), outerZ + thisLane.Height(2)];
                 surface = fcn_INTERNAL_addStrip(surface, innerPoints, outerPoints, laneColor);
                 if abs(thisLane.Height(1) - previousHeight) > 1e-9          % a step (a curb face)
-                    surface = fcn_INTERNAL_addStrip(surface, [inner(:,1:2), previousHeight*ones(Nsamples,1)], innerPoints, laneColor);
+                    surface = fcn_INTERNAL_addStrip(surface, [inner(:,1:2), innerZ + previousHeight], innerPoints, laneColor);
                 end
-                if ith_lane==numel(lanes) && thisLane.Height(2) > 1e-9      % the outer side down to the ground
-                    surface = fcn_INTERNAL_addStrip(surface, outerPoints, [outer(:,1:2), zeros(Nsamples,1)], laneColor);
+                if ith_lane==numel(lanes) && thisLane.Height(2) > 1e-9      % the outer side down to the road surface
+                    surface = fcn_INTERNAL_addStrip(surface, outerPoints, [outer(:,1:2), outerZ], laneColor);
+                end
+                if options.ShowBanks && ith_lane==numel(lanes) && max(abs(outerZ)) > 0.01   % a grassy bank to the ground (z = 0)
+                    bankWidth = max(2, 2*abs(outerZ));
+                    bank = fcn_AnimateCar3D_getRoadPoints(road, sSamples, LaneID=thisLane.ID, LaneEdge='outer', ...
+                        T=sign(thisLane.ID)*bankWidth, FigNum=-1);
+                    surface = fcn_INTERNAL_addStrip(surface, [outer(:,1:2), outerZ], [bank(:,1:2), zeros(size(outerZ))], colors.border);
                 end
                 previousHeight = thisLane.Height(2);
 
@@ -340,7 +350,7 @@ if flagNewAxes
     % (Heights from below the road to 10 m or more, so a camera above a
     % flat road is inside the axes and the road is not clipped away)
     axis(axesHandle, 'equal');
-    zlim(axesHandle, [-0.5, max([10; objects.Vertices(:,3) + 2; buildingHeights + 2])]);
+    zlim(axesHandle, [min([-0.5; surface.Vertices(:,3) - 0.5]), max([10; surface.Vertices(:,3) + 10; objects.Vertices(:,3) + 2; buildingHeights + 2])]);
     view(axesHandle, -30, 35);
 end
 
@@ -415,13 +425,33 @@ breakpoints = breakpoints(breakpoints > sStart & breakpoints < sEnd);
 sSamples = unique([sStart:spacing:sEnd, sEnd, breakpoints(:)'])';
 end % Ends fcn_INTERNAL_samples
 
+%% fcn_INTERNAL_isLevel
+function flagLevel = fcn_INTERNAL_isLevel(road)
+% True if the road's elevation and superelevation do not change along s
+flagLevel = true;
+recordSets = {};
+if isfield(road, 'ElevationProfile')
+    recordSets{end+1} = road.ElevationProfile;
+end
+if isfield(road, 'LateralProfile') && isstruct(road.LateralProfile) && isfield(road.LateralProfile, 'Superelevation')
+    recordSets{end+1} = road.LateralProfile.Superelevation;
+end
+for ith_set = 1:numel(recordSets)
+    records = recordSets{ith_set};
+    if ~isempty(records) && (numel(records) > 1 || any([records.B, records.C, records.D]~=0))
+        flagLevel = false;
+    end
+end
+end % Ends fcn_INTERNAL_isLevel
+
 %% fcn_INTERNAL_sectionSamples
-function sSamples = fcn_INTERNAL_sectionSamples(planView, section, sectionEnd, spacing)
+function sSamples = fcn_INTERNAL_sectionSamples(planView, section, sectionEnd, spacing, flagLevel)
 % Samples along a lane section: every spacing meters on curves, and only
-% every 50 m on straight lines when every lane's width is constant (a
-% straight strip needs no more), so straight roads stay sparse
+% every 50 m on straight lines when every lane's width is constant and
+% the road's heights are level (a straight, level strip needs no more),
+% so straight roads stay sparse
 allLanes = [section.Left(:); section.Right(:)];
-flagConstantWidths = isempty(allLanes) || all(arrayfun(@(lane) all(lane.Width(2:4)==0), allLanes));
+flagConstantWidths = flagLevel && (isempty(allLanes) || all(arrayfun(@(lane) all(lane.Width(2:4)==0), allLanes)));
 sSamples = [section.S; sectionEnd];
 for ith_geometry = 1:numel(planView)
     geometryStart = max(planView(ith_geometry).S, section.S);
@@ -533,7 +563,7 @@ if numel(lineTypes)==1
 else
     lineOffsets = [1 -1]*markWidth;              % (a gap of one line width)
 end
-zMark = surfaceHeight + 0.02;
+zMark = surfaceHeight + 0.02;                   % (above the road surface's height)
 for ith_line = 1:numel(lineTypes)
     if strcmp(lineTypes(ith_line), "broken")
         period = roadMark.LineLength + roadMark.LineSpace;
@@ -552,21 +582,21 @@ for ith_line = 1:numel(lineTypes)
         if numel(sPiece) < 2
             continue;
         end
-        leftEdge = fcn_INTERNAL_markEdge(road, sPiece, laneID, lineOffsets(ith_line) + markWidth/2);
-        rightEdge = fcn_INTERNAL_markEdge(road, sPiece, laneID, lineOffsets(ith_line) - markWidth/2);
-        Npoints = numel(sPiece);
-        mesh = fcn_INTERNAL_addStrip(mesh, [rightEdge(:,1:2), zMark*ones(Npoints,1)], [leftEdge(:,1:2), zMark*ones(Npoints,1)], markColor);
+        [leftEdge, leftZ] = fcn_INTERNAL_markEdge(road, sPiece, laneID, lineOffsets(ith_line) + markWidth/2);
+        [rightEdge, rightZ] = fcn_INTERNAL_markEdge(road, sPiece, laneID, lineOffsets(ith_line) - markWidth/2);
+        mesh = fcn_INTERNAL_addStrip(mesh, [rightEdge(:,1:2), rightZ + zMark], [leftEdge(:,1:2), leftZ + zMark], markColor);
     end
 end
 end % Ends fcn_INTERNAL_addMark
 
 %% fcn_INTERNAL_markEdge
-function points = fcn_INTERNAL_markEdge(road, sValues, laneID, tOffset)
-% Points offset from a lane's outer edge (or from the reference line)
+function [points, zValues] = fcn_INTERNAL_markEdge(road, sValues, laneID, tOffset)
+% Points offset from a lane's outer edge (or from the reference line),
+% and the road surface's height there
 if laneID==0
-    points = fcn_AnimateCar3D_getRoadPoints(road, sValues, T=tOffset, FigNum=-1);
+    [points, ~, zValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues, T=tOffset, FigNum=-1);
 else
-    points = fcn_AnimateCar3D_getRoadPoints(road, sValues, LaneID=laneID, LaneEdge='outer', T=tOffset, FigNum=-1);
+    [points, ~, zValues] = fcn_AnimateCar3D_getRoadPoints(road, sValues, LaneID=laneID, LaneEdge='outer', T=tOffset, FigNum=-1);
 end
 end % Ends fcn_INTERNAL_markEdge
 
@@ -603,8 +633,8 @@ switch object.Type
         Nsamples = numel(sSamples);
         rows = cell(1, size(profile,1));
         for ith_point = 1:size(profile,1)
-            points = fcn_AnimateCar3D_getRoadPoints(road, sSamples, T=object.T + profile(ith_point,1), FigNum=-1);
-            rows{ith_point} = [points(:,1:2), (object.ZOffset + profile(ith_point,2))*ones(Nsamples,1)];
+            [points, ~, roadZ] = fcn_AnimateCar3D_getRoadPoints(road, sSamples, T=object.T + profile(ith_point,1), FigNum=-1);
+            rows{ith_point} = [points(:,1:2), roadZ + object.ZOffset + profile(ith_point,2)];
         end
         for ith_point = 1:size(profile,1)-1
             mesh = fcn_INTERNAL_addStrip(mesh, rows{ith_point+1}, rows{ith_point}, objectColor);
@@ -623,20 +653,20 @@ switch object.Type
         stripeStarts = (object.T - object.Width/2):1.2:(object.T + object.Width/2 - 0.6 + 1e-9);
         sEnds = object.S + [-1 1]*object.Length/2;
         for tStripe = stripeStarts
-            edgeA = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=tStripe, FigNum=-1);
-            edgeB = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=tStripe + 0.6, FigNum=-1);
-            mesh = fcn_INTERNAL_addStrip(mesh, [edgeA(:,1:2), 0.025*ones(2,1)], [edgeB(:,1:2), 0.025*ones(2,1)], objectColor);
+            [edgeA, ~, zA] = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=tStripe, FigNum=-1);
+            [edgeB, ~, zB] = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=tStripe + 0.6, FigNum=-1);
+            mesh = fcn_INTERNAL_addStrip(mesh, [edgeA(:,1:2), zA + 0.025], [edgeB(:,1:2), zB + 0.025], objectColor);
         end
     case 'stopLine'
         % A flat white bar across the lanes
         sEnds = object.S + [-1 1]*object.Length/2;
-        edgeA = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=object.T - object.Width/2, FigNum=-1);
-        edgeB = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=object.T + object.Width/2, FigNum=-1);
-        mesh = fcn_INTERNAL_addStrip(mesh, [edgeA(:,1:2), 0.025*ones(2,1)], [edgeB(:,1:2), 0.025*ones(2,1)], colors.white);
+        [edgeA, ~, zA] = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=object.T - object.Width/2, FigNum=-1);
+        [edgeB, ~, zB] = fcn_AnimateCar3D_getRoadPoints(road, sEnds', T=object.T + object.Width/2, FigNum=-1);
+        mesh = fcn_INTERNAL_addStrip(mesh, [edgeA(:,1:2), zA + 0.025], [edgeB(:,1:2), zB + 0.025], colors.white);
     case 'arrow'
         % A lane arrow, turned to the direction of travel (the road's
         % heading plus Hdg), scaled to Length
-        place = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
+        [place, ~, placeZ] = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
         heading = place(3) + object.Hdg;
         along = [cos(heading) sin(heading)];
         left = [-sin(heading) cos(heading)];
@@ -645,13 +675,13 @@ switch object.Type
             uv = quads{ith_quad}.*[object.Length/5 1];
             quads{ith_quad} = place(1:2) + uv(:,1)*along + uv(:,2)*left;
         end
-        mesh = fcn_INTERNAL_addQuads(mesh, quads, 0.02, colors.white);
+        mesh = fcn_INTERNAL_addQuads(mesh, quads, placeZ + 0.02, colors.white);
     case 'pedestrian'
         % A standing person (the simple 'pedestrian' shape), facing Hdg
         shape = fcn_AnimateCar3D_fillSimpleShape('pedestrian', FigNum=-1);
-        place = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
+        [place, ~, placeZ] = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
         heading = place(3) + object.Hdg;
-        zBase = object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
+        zBase = placeZ + object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
         local = shape.Vertices.*[object.Length object.Width object.Height];
         vertices = [place(1) + local(:,1)*cos(heading) - local(:,2)*sin(heading), ...
                     place(2) + local(:,1)*sin(heading) + local(:,2)*cos(heading), zBase + local(:,3)];
@@ -666,10 +696,10 @@ switch object.Type
         mesh.Colors = [mesh.Colors; faceColors];
     case 'tree'
         % A block tree: a trunk, and a canopy from 45% of its height up
-        place = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
+        [place, ~, placeZ] = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
         canopyColor = colors.treeCanopy;
         if ~isempty(objectColor), canopyColor = objectColor; end
-        zBase = object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
+        zBase = placeZ + object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
         mesh = fcn_INTERNAL_addBox(mesh, place(1:2), place(3) + object.Hdg, 0.3, 0.3, zBase, zBase + 0.45*object.Height, ...
             colors.treeTrunk, colors.treeTrunk);
         mesh = fcn_INTERNAL_addBox(mesh, place(1:2), place(3) + object.Hdg, object.Length, object.Width, ...
@@ -677,8 +707,8 @@ switch object.Type
     otherwise
         % A building, or any other object: a box
         if isempty(objectColor), objectColor = colors.building; end
-        place = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
-        zBase = object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
+        [place, ~, placeZ] = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
+        zBase = placeZ + object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
         mesh = fcn_INTERNAL_addBox(mesh, place(1:2), place(3) + object.Hdg, object.Length, object.Width, ...
             zBase, zBase + object.Height, objectColor, 0.8*objectColor);
 end

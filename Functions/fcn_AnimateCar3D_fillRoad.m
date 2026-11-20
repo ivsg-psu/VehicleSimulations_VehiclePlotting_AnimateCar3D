@@ -48,6 +48,13 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %       shoulders, and grass borders.
 %   'curvy': the same road, curving left and right (lines, spirals, and
 %       arcs of 60 m and 50 m radius), about 400 m.
+%   'mountain': a mountain road, about 2 km (Length), random but
+%       repeatable (Seed): straight runs between bends of 30 to 120 m
+%       radius, now and then a hairpin (18 to 25 m radius, 150 to 180
+%       degrees), with spirals into and out of every bend, never passing
+%       within 30 m of itself; one lane each way, a double yellow center
+%       line, 1 m shoulders. By default it climbs and descends
+%       (Elevation='mountain') with banked curves (CrossSlope='banked').
 %   'interstate': a straight divided highway, 4 lanes each way, 400 m:
 %       broken white lines between lanes, a solid yellow line at the
 %       inside shoulder and a solid white line at the outside shoulder,
@@ -73,6 +80,35 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %       corners; crosswalks, stop lines, and lane arrows. This preset
 %       returns a road NETWORK (see OUTPUTS).
 %
+% HEIGHTS (OpenDRIVE <elevationProfile> and <lateralProfile>), for any
+% preset but the intersection (which stays flat):
+%
+%   ElevationProfile: the road's height along s, piecewise cubics (S, A,
+%       B, C, D: height = A + B*ds + C*ds^2 + D*ds^3, ds from S). With
+%       Elevation='hilly', random hills (from Seed) made from the grade,
+%       as road designers do: the grade is set at knots spaced randomly
+%       along the road (normally distributed, about 50 m apart, from 20
+%       to 100 m), starts at 0, changes by at most MaxGradeChange per 100
+%       m of road, never passes MaxGrade, and is level wherever asked; it
+%       is linear between knots, and the height follows from it
+%       (piecewise quadratic), starting at 0. MaxHeightRange caps the
+%       height from lowest to highest (by scaling the grades down).
+%       Elevation='mountain' is the same, but the road climbs all the way
+%       to a summit at mid-road (each knot's grade a random 40 to 100% of
+%       the limit), then descends all the way, as over a mountain.
+%       As road designers do on mountain roads, the grade eases on sharp
+%       curves, so that most of the climbing is on the straighter parts:
+%       on a curve of radius R tighter than CurveGradeRadius, the limit
+%       is MaxGrade*R/CurveGradeRadius (never below 20% of MaxGrade), with
+%       knots at each curve's ends so the whole curve keeps to it.
+%   LateralProfile.Superelevation: the road's roll angle (radians,
+%       positive: the left side higher), in the same cubic form. With
+%       CrossSlope='banked', the road tilts down toward the inside of each
+%       curve, in proportion to the curvature, up to MaxCrossSlope (a
+%       rise over run) at the tightest curve; it changes smoothly along
+%       the spirals.
+%   Flat roads have one record of zeros for each.
+%
 % The urban street, neighborhood, and intersection have occasional
 % pedestrians standing on the sidewalks (road objects of type
 % 'pedestrian', for scenery; moving pedestrians belong in the scenario).
@@ -83,13 +119,16 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %           (LaneWidth=meters), (LanesEachWay=n), (CenterMark=type),...
 %           (Start=[x y heading]), (Seed=seed), (BuildingSetback=meters),...
 %           (BuildingSides=sides), (BlockLength=meters),...
-%           (RightTurnLane=flag), (FigNum=figNum))
+%           (RightTurnLane=flag), (Elevation=elevation),...
+%           (MaxGrade=grade), (MaxGradeChange=gradePer100m), (ConfirmSteep=flag),...
+%           (CurveGradeRadius=meters), (MaxHeightRange=meters), (CrossSlope=crossSlope),...
+%           (MaxCrossSlope=slope), (FigNum=figNum))
 %
 % INPUTS:
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
-%      Preset: 'twoLane' (default), 'curvy', 'interstate',
+%      Preset: 'twoLane' (default), 'curvy', 'mountain', 'interstate',
 %      'urbanStreet', 'neighborhood', or 'intersection'.
 %
 %      Length: the road length, meters (straight presets). Default: the
@@ -124,6 +163,36 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %      about 1 in 7), and fcn_AnimateCar3D_plotRoad draws them see-
 %      through (NearSideAlpha, 0.3), so a camera beside and behind
 %      traffic sees through and over them.
+%
+%      BlockLength: meters between crosswalks ('neighborhood'). Default
+%      400.
+%
+%      RightTurnLane: true for a separate right-turn lane on each arm
+%      ('intersection'). Default false.
+%
+%      Elevation: 'flat', 'hilly', or 'mountain' (see HEIGHTS). Default:
+%      'mountain' for the 'mountain' preset, 'flat' for the others.
+%      MaxGrade: the steepest grade, rise over run. Default: 0.12 for the
+%      'mountain' preset, 0.06 for the others.
+%      MaxGradeChange: the fastest change of grade, as a fraction, per
+%      100 m of road (0.35 means the grade may change by 35 percentage
+%      points over 100 m, about 20 degrees, close to AASHTO design for
+%      25 mph roads). Default 0.35.
+%      Above 0.5 (15% per 100 ft, about the steepest in US federal
+%      guidance), a warning is given; with ConfirmSteep true, a dialog
+%      also asks whether to go on.
+%      ConfirmSteep: true to ask, in a dialog, before using a
+%      MaxGradeChange above 0.5. Default false.
+%      CurveGradeRadius: meters; curves tighter than this get a lower
+%      grade limit (see HEIGHTS): a hairpin of 20 m radius on a 12% road
+%      is at most 2.4%. Default 150; 0 for no easing.
+%      MaxHeightRange: meters from the lowest to the highest point; Inf
+%      (default) for no cap.
+%
+%      CrossSlope: 'none' or 'banked' (see HEIGHTS). Default: 'banked'
+%      for the 'mountain' preset, 'none' for the others.
+%      MaxCrossSlope: the steepest cross-slope, rise over run. Default
+%      0.06.
 %
 %      FigNum: a figure to draw the road in (fcn_AnimateCar3D_plotRoad).
 %      Empty (default) for no figure; -1 for fast mode (no input checks).
@@ -200,6 +269,14 @@ arguments
     options.BuildingSides = ''      % 'both', 'left', 'right', 'none'; '' for the preset's
     options.BlockLength = 400       % meters between crosswalks ('neighborhood')
     options.RightTurnLane = false   % separate right-turn lanes ('intersection')
+    options.Elevation = ''          % 'flat', 'hilly', or 'mountain'; '' for the preset's
+    options.MaxGrade = []           % rise over run ('hilly'); [] for the preset's (0.12 'mountain', else 0.06)
+    options.MaxGradeChange = 0.35   % grade change per 100 m, as a fraction ('hilly'): about 20 degrees
+    options.ConfirmSteep = false    % ask before a MaxGradeChange above 0.5
+    options.CurveGradeRadius = 150  % meters: the grade eases on curves tighter than this; 0 for none
+    options.MaxHeightRange = Inf    % meters, lowest to highest ('hilly'); Inf for no cap
+    options.CrossSlope = ''         % 'none' or 'banked'; '' for the preset's
+    options.MaxCrossSlope = 0.06    % rise over run ('banked')
     options.FigNum = []             % figure to draw the road; -1 for fast mode
 end
 
@@ -253,7 +330,7 @@ if 0==flag_max_speed
 
 
         % Check the choices
-        presetNames = {'twoLane','curvy','interstate','urbanStreet','neighborhood','intersection'};
+        presetNames = {'twoLane','curvy','mountain','interstate','urbanStreet','neighborhood','intersection'};
         if ~any(strcmpi(options.Preset, presetNames))
             error('Preset must be one of: %s', strjoin(presetNames, ', '));
         end
@@ -275,6 +352,33 @@ if 0==flag_max_speed
         end
         if ~((islogical(options.RightTurnLane) || isnumeric(options.RightTurnLane)) && isscalar(options.RightTurnLane))
             error('RightTurnLane must be true or false');
+        end
+        if ~isempty(options.Elevation) && ~any(strcmpi(options.Elevation, {'flat','hilly','mountain'}))
+            error('Elevation must be ''flat'', ''hilly'', or ''mountain''');
+        end
+        if ~isempty(options.CrossSlope) && ~any(strcmpi(options.CrossSlope, {'none','banked'}))
+            error('CrossSlope must be ''none'' or ''banked''');
+        end
+        heightNames = {'MaxGradeChange','MaxHeightRange','MaxCrossSlope','CurveGradeRadius'};
+        if ~isempty(options.MaxGrade) && ~(isnumeric(options.MaxGrade) && isscalar(options.MaxGrade) && options.MaxGrade >= 0)
+            error('MaxGrade must be a number, 0 or more');
+        end
+        for ith_name = 1:numel(heightNames)
+            thisValue = options.(heightNames{ith_name});
+            if ~(isnumeric(thisValue) && isscalar(thisValue) && thisValue >= 0)
+                error('%s must be a number, 0 or more', heightNames{ith_name});
+            end
+        end
+        if options.MaxGradeChange > 0.5
+            warning('AnimateCar3D:fillRoad:steepGradeChange', ['MaxGradeChange %.2f is above 0.5 per 100 m ' ...
+                '(15%% per 100 ft, about the steepest in US federal guidance).'], options.MaxGradeChange);
+            if options.ConfirmSteep && usejava('desktop')
+                answer = questdlg(sprintf('MaxGradeChange %.2f per 100 m is steeper than federal guidance (0.5). Go on?', ...
+                    options.MaxGradeChange), 'Steep grade change', 'Go on', 'Stop', 'Stop');
+                if ~strcmp(answer, 'Go on')
+                    error('Stopped: MaxGradeChange above 0.5 per 100 m');
+                end
+            end
         end
         if ~(isnumeric(options.Seed) && isscalar(options.Seed) && options.Seed >= 0 && options.Seed==round(options.Seed))
             error('Seed must be a whole number, 0 or more');
@@ -350,6 +454,14 @@ else
                           fcn_INTERNAL_lane(-3, 'border', 4.0, 0, 'none', white)];
             centerLane = fcn_INTERNAL_lane(0, 'none', 0, 0, centerMark, 'yellow');
 
+        case 'mountain'
+            centerMark = fcn_INTERNAL_pick(options.CenterMark, 'solid solid');
+            segments = fcn_INTERNAL_mountainSegments(fcn_INTERNAL_pick(options.Length, 2000), options.Seed, options.Start);
+            rightLanes = [fcn_INTERNAL_lane(-1, 'driving', laneWidth, 0, 'solid', white); ...
+                          fcn_INTERNAL_lane(-2, 'shoulder', 1.0, 0, 'none', white); ...
+                          fcn_INTERNAL_lane(-3, 'border', 3.0, 0, 'none', white)];
+            centerLane = fcn_INTERNAL_lane(0, 'none', 0, 0, centerMark, 'yellow');
+
         case 'interstate'
             segments = fcn_INTERNAL_segment('line', fcn_INTERNAL_pick(options.Length, 400), 0, 0);
             Nlanes = options.LanesEachWay;
@@ -391,6 +503,30 @@ else
     planView = fcn_INTERNAL_planView(segments, options.Start);
     road.PlanView = planView;
     road.Length = planView(end).S + planView(end).Length;
+
+    %%%% Heights: elevation along s, and superelevation (cross-slope)
+    road.ElevationProfile = fcn_INTERNAL_flatCubics(0);
+    road.LateralProfile = struct('Superelevation', fcn_INTERNAL_flatCubics(0));
+    elevationChoice = fcn_INTERNAL_pick(options.Elevation, 'flat');
+    crossSlopeChoice = fcn_INTERNAL_pick(options.CrossSlope, 'none');
+    maxGrade = fcn_INTERNAL_pick(options.MaxGrade, 0.06);
+    if strcmp(presetName, 'mountain')
+        elevationChoice = fcn_INTERNAL_pick(options.Elevation, 'mountain');
+        crossSlopeChoice = fcn_INTERNAL_pick(options.CrossSlope, 'banked');
+        maxGrade = fcn_INTERNAL_pick(options.MaxGrade, 0.12);
+        road.TerrainShape = 'mountain';                 % (fcn_AnimateCar3D_fillTerrain: a mountain around it)
+    end
+    if strcmpi(elevationChoice, 'mountain')
+        road.ElevationProfile = fcn_INTERNAL_hillyProfile(road.Length, options.Seed, maxGrade, options.MaxGradeChange, ...
+            options.MaxHeightRange, zeros(0,2), 'mountain', planView, options.CurveGradeRadius);
+    end
+    if strcmpi(elevationChoice, 'hilly')
+        road.ElevationProfile = fcn_INTERNAL_hillyProfile(road.Length, options.Seed, maxGrade, options.MaxGradeChange, ...
+            options.MaxHeightRange, zeros(0,2), 'hilly', planView, options.CurveGradeRadius);
+    end
+    if strcmpi(crossSlopeChoice, 'banked')
+        road.LateralProfile.Superelevation = fcn_INTERNAL_bankedProfile(planView, options.MaxCrossSlope);
+    end
 
     %%%% One lane section: the left lanes mirror the right ones
     leftLanes = rightLanes;
@@ -528,6 +664,248 @@ function object = fcn_INTERNAL_object(objectType, objectName, sStart, tCenter, o
 object = struct('ID',objectID, 'Type',objectType, 'Name',objectName, 'S',sStart, 'T',tCenter, 'ZOffset',0, ...
     'Length',objectLength, 'Width',objectWidth, 'Height',objectHeight, 'Hdg',0, 'Repeat',false, 'Color',[]);
 end % Ends fcn_INTERNAL_object
+
+%% fcn_INTERNAL_flatCubics
+function records = fcn_INTERNAL_flatCubics(sStart)
+% One piecewise-cubic record of zeros (OpenDRIVE S, A, B, C, D)
+records = struct('S',sStart, 'A',0, 'B',0, 'C',0, 'D',0);
+end % Ends fcn_INTERNAL_flatCubics
+
+%% fcn_INTERNAL_hillyProfile
+function records = fcn_INTERNAL_hillyProfile(roadLength, seed, maxGrade, maxGradeChange, maxHeightRange, flatRanges, profileShape, planView, curveGradeRadius)
+% Random hills made from the grade, from their own random numbers: knots
+% spaced randomly (normal, mean 50 m, standard deviation 15 m, kept from
+% 20 to 100 m), with every range end a knot; the grade at each knot is a
+% random walk, each step no more than maxGradeChange per 100 m of the
+% distance, within +/- maxGrade, starting level ('mountain': climbing all
+% the way to a summit at mid-road, then descending all the way: each
+% knot's grade a random 40 to 100% of maxGrade, uphill before the
+% summit and downhill after, reached as fast as the limit allows). Inside
+% flatRanges (rows of [sFrom sTo]) the grade is 0, and the knots around
+% are pulled back so every step stays within the limit. The grade is
+% linear between knots, so the height is quadratic (an OpenDRIVE cubic
+% with D = 0). If the heights span more than maxHeightRange, all grades
+% are scaled down. With curveGradeRadius > 0, each curve's ends are knots
+% too, and the limit at each knot is lower on tight curves:
+% maxGrade*R/curveGradeRadius, at least 0.2*maxGrade.
+randomStream = RandStream('mt19937ar', 'Seed', seed + 2000);
+curveEnds = zeros(0,1);
+if curveGradeRadius > 0
+    for ith_geometry = 1:numel(planView)
+        if ~strcmp(planView(ith_geometry).Type, 'line')
+            curveEnds = [curveEnds; planView(ith_geometry).S; planView(ith_geometry).S + planView(ith_geometry).Length]; %#ok<AGROW>
+        end
+    end
+end
+breaks = unique([0; roadLength; flatRanges(:); curveEnds(curveEnds > 0 & curveEnds < roadLength)]);
+knotS = 0;
+for ith_break = 1:numel(breaks)-1
+    sHere = breaks(ith_break);
+    while true
+        spacing = min(max(50 + 15*randomStream.randn, 20), 100);
+        if breaks(ith_break+1) - sHere < spacing + 20
+            break;                                      % (the last piece of this stretch: to its end)
+        end
+        sHere = sHere + spacing;
+        knotS(end+1,1) = sHere; %#ok<AGROW>
+    end
+    knotS(end+1,1) = breaks(ith_break+1); %#ok<AGROW>
+end
+knotS = unique(knotS);
+Nknots = numel(knotS);
+flagLevel = false(Nknots,1);
+for ith_range = 1:size(flatRanges,1)
+    flagLevel = flagLevel | (knotS >= flatRanges(ith_range,1) - 1e-9 & knotS <= flatRanges(ith_range,2) + 1e-9);
+end
+flagLevel(1) = true;                                    % (starts level)
+gradePerMeter = maxGradeChange/100;
+% (each knot's limit: lower on tight curves)
+knotLimit = maxGrade*ones(Nknots,1);
+if curveGradeRadius > 0
+    knotCurvature = fcn_INTERNAL_curvatureAt(planView, knotS);
+    knotLimit = maxGrade*max(0.2, min(1, 1./(max(knotCurvature, eps)*curveGradeRadius)));
+end
+knotGrade = zeros(Nknots,1);
+draws = randomStream.rand(Nknots,1);
+for ith_knot = 2:Nknots
+    stepLimit = gradePerMeter*(knotS(ith_knot) - knotS(ith_knot-1));
+    if strcmp(profileShape, 'mountain')
+        target = knotLimit(ith_knot)*(0.4 + 0.6*draws(ith_knot))*sign(roadLength/2 - knotS(ith_knot));
+        step = min(max(target - knotGrade(ith_knot-1), -stepLimit), stepLimit);
+    else
+        step = stepLimit*(2*draws(ith_knot) - 1);
+    end
+    knotGrade(ith_knot) = min(max(knotGrade(ith_knot-1) + step, -knotLimit(ith_knot)), knotLimit(ith_knot));
+end
+knotGrade(flagLevel) = 0;
+for pass = 1:4                                          % (every step within the limit, level knots level)
+    knotGrade = min(max(knotGrade, -knotLimit), knotLimit);
+    for ith_knot = [2:Nknots, Nknots-1:-1:1]
+        for neighbor = ith_knot + [-1 1]
+            if neighbor >= 1 && neighbor <= Nknots
+                stepLimit = gradePerMeter*abs(knotS(ith_knot) - knotS(neighbor));
+                knotGrade(ith_knot) = min(max(knotGrade(ith_knot), knotGrade(neighbor) - stepLimit), knotGrade(neighbor) + stepLimit);
+            end
+        end
+        if flagLevel(ith_knot)
+            knotGrade(ith_knot) = 0;
+        end
+    end
+end
+records = fcn_INTERNAL_gradeCubics(knotS, knotGrade);
+fineHeights = fcn_INTERNAL_cubicValues(records, linspace(0, roadLength, 4000)');
+heightRange = max(fineHeights) - min(fineHeights);
+if heightRange > maxHeightRange
+    records = fcn_INTERNAL_gradeCubics(knotS, knotGrade*maxHeightRange/heightRange);
+end
+end % Ends fcn_INTERNAL_hillyProfile
+
+%% fcn_INTERNAL_curvatureAt
+function curvatures = fcn_INTERNAL_curvatureAt(planView, sValues)
+% The largest curvature magnitude at each s (of the geometries touching
+% it, within 0.5 m)
+curvatures = zeros(size(sValues));
+for ith_geometry = 1:numel(planView)
+    geometry = planView(ith_geometry);
+    rows = sValues >= geometry.S - 0.5 & sValues <= geometry.S + geometry.Length + 0.5;
+    switch geometry.Type
+        case 'arc'
+            here = abs(geometry.Curvature)*ones(nnz(rows),1);
+        case 'spiral'
+            fraction = min(max((sValues(rows) - geometry.S)/geometry.Length, 0), 1);
+            here = abs(geometry.CurvStart + fraction*(geometry.CurvEnd - geometry.CurvStart));
+        otherwise
+            here = zeros(nnz(rows),1);
+    end
+    curvatures(rows) = max(curvatures(rows), here(:));
+end
+end % Ends fcn_INTERNAL_curvatureAt
+
+%% fcn_INTERNAL_gradeCubics
+function records = fcn_INTERNAL_gradeCubics(knotS, knotGrade)
+% Heights from grades that are linear between knots: quadratic pieces,
+% starting at height 0, each starting where the last ended
+Npieces = numel(knotS) - 1;
+records = repmat(fcn_INTERNAL_flatCubics(0), Npieces, 1);
+height = 0;
+for ith_piece = 1:Npieces
+    L = knotS(ith_piece+1) - knotS(ith_piece);
+    curvatureTerm = (knotGrade(ith_piece+1) - knotGrade(ith_piece))/(2*L);
+    records(ith_piece) = struct('S',knotS(ith_piece), 'A',height, 'B',knotGrade(ith_piece), 'C',curvatureTerm, 'D',0);
+    height = height + knotGrade(ith_piece)*L + curvatureTerm*L^2;
+end
+end % Ends fcn_INTERNAL_gradeCubics
+
+%% fcn_INTERNAL_cubicValues
+function values = fcn_INTERNAL_cubicValues(records, sValues)
+% Piecewise cubics' values
+pieceIndex = max(sum(sValues >= [records.S], 2), 1);
+ds = sValues - [records(pieceIndex).S]';
+values = [records(pieceIndex).A]' + [records(pieceIndex).B]'.*ds + [records(pieceIndex).C]'.*ds.^2 + [records(pieceIndex).D]'.*ds.^3;
+end % Ends fcn_INTERNAL_cubicValues
+
+%% fcn_INTERNAL_bankedProfile
+function records = fcn_INTERNAL_bankedProfile(planView, maxCrossSlope)
+% Superelevation following the curvature: down to the inside of each
+% curve (a left curve, curvature > 0, lowers the left side: a negative
+% roll), proportional to the curvature, maxCrossSlope at the tightest.
+% Linear in s along spirals, constant on arcs, zero on lines.
+curvatureEnds = zeros(numel(planView), 2);
+for ith_geometry = 1:numel(planView)
+    switch planView(ith_geometry).Type
+        case 'arc'
+            curvatureEnds(ith_geometry,:) = planView(ith_geometry).Curvature;
+        case 'spiral'
+            curvatureEnds(ith_geometry,:) = [planView(ith_geometry).CurvStart planView(ith_geometry).CurvEnd];
+    end
+end
+tightest = max(abs(curvatureEnds(:)));
+records = repmat(fcn_INTERNAL_flatCubics(0), numel(planView), 1);
+if tightest==0
+    records = fcn_INTERNAL_flatCubics(0);
+    return;
+end
+rollPerCurvature = -atan(maxCrossSlope)/tightest;
+for ith_geometry = 1:numel(planView)
+    records(ith_geometry) = struct('S',planView(ith_geometry).S, 'A',rollPerCurvature*curvatureEnds(ith_geometry,1), ...
+        'B',rollPerCurvature*diff(curvatureEnds(ith_geometry,:))/planView(ith_geometry).Length, 'C',0, 'D',0);
+end
+end % Ends fcn_INTERNAL_bankedProfile
+
+%% fcn_INTERNAL_mountainSegments
+function segments = fcn_INTERNAL_mountainSegments(targetLength, seed, startPose)
+% A random winding road: a straight run, then a bend (spiral in, arc,
+% spiral out), repeated until targetLength. Bends are 30 to 120 m radius,
+% turning 20 to 100 degrees; about one in six is a hairpin (18 to 25 m
+% radius, 150 to 180 degrees). The road keeps a general direction: once
+% the net turn passes 90 degrees, bends turn back (so hairpins come in
+% switchback pairs, as up a mountainside); otherwise they mostly
+% alternate. Each new bend is tried up to 20 times so that every point
+% stays 30 m from the road more than 150 m back along it; if none fits,
+% the bend before is taken back and tried again.
+randomStream = RandStream('mt19937ar', 'Seed', seed + 4000);
+segments = fcn_INTERNAL_segment('line', 40, 0, 0);
+blockTurns = 0;                                         % (the net turn after each block, radians)
+turnDirection = 1;
+backtracks = 0;
+while sum([segments.Length]) < targetLength
+    netTurn = blockTurns(end);
+    flagPlaced = false;
+    for attempt = 1:20
+        draws = randomStream.rand(1,5);
+        if abs(netTurn) > pi/2
+            turnDirection = -sign(netTurn);             % (turn back toward the general direction)
+        elseif draws(5) < 0.75
+            turnDirection = -turnDirection;             % (mostly alternating)
+        end
+        if draws(1) < 1/6 && abs(netTurn) <= pi/2
+            radius = 18 + 7*draws(2);
+            turnAngle = deg2rad(150 + 30*draws(3));
+        else
+            radius = 30 + 90*draws(2);
+            turnAngle = deg2rad(20 + 80*draws(3));
+        end
+        straightLength = 15 + 65*draws(4);
+        spiralLength = min(25, 0.8*radius*turnAngle);
+        arcLength = radius*turnAngle - spiralLength;     % (the two spirals turn spiralLength/radius in all)
+        curvature = turnDirection/radius;
+        block = [fcn_INTERNAL_segment('line', straightLength, 0, 0); ...
+                 fcn_INTERNAL_segment('spiral', spiralLength, 0, curvature); ...
+                 fcn_INTERNAL_segment('arc', arcLength, curvature, curvature); ...
+                 fcn_INTERNAL_segment('spiral', spiralLength, curvature, 0)];
+        if fcn_INTERNAL_clearOfItself([segments; block], sum([segments.Length]), startPose)
+            segments = [segments; block]; %#ok<AGROW>
+            blockTurns(end+1) = netTurn + turnDirection*turnAngle; %#ok<AGROW>
+            flagPlaced = true;
+            break;
+        end
+    end
+    if ~flagPlaced
+        backtracks = backtracks + 1;
+        if numel(segments) > 1 && backtracks < 200
+            segments = segments(1:end-4);               % (take the last bend back)
+            blockTurns(end) = [];
+        else
+            error('Could not lay out a mountain road clear of itself; try another Seed or Length');
+        end
+    end
+end
+segments(end+1) = fcn_INTERNAL_segment('line', 40, 0, 0);
+end % Ends fcn_INTERNAL_mountainSegments
+
+%% fcn_INTERNAL_clearOfItself
+function flagClear = fcn_INTERNAL_clearOfItself(segments, sNew, startPose)
+% True if every point of the road after sNew stays 30 m from every point
+% more than 150 m before it along the road
+planView = fcn_INTERNAL_planView(segments, startPose);
+roadLength = planView(end).S + planView(end).Length;
+sAll = (0:5:roadLength)';
+allPoints = fcn_AnimateCar3D_getRoadPoints(struct('PlanView',planView), sAll, FigNum=-1);
+newRows = find(sAll >= sNew);
+distances = hypot(allPoints(newRows,1) - allPoints(:,1)', allPoints(newRows,2) - allPoints(:,2)');
+farBack = sAll(newRows) - sAll' > 150;
+flagClear = ~any(distances(farBack) <= 30);
+end % Ends fcn_INTERNAL_clearOfItself
 
 %% fcn_INTERNAL_pedestrians
 function objects = fcn_INTERNAL_pedestrians(roadLength, sidewalkT, jitter, spacing, probability, seed)
