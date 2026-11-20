@@ -201,7 +201,22 @@ fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear')
 
 **Traffic file** (`fcn_AnimateCar3D_loadTrafficFile`): `id`, `time`, `X`, `Y`, `yaw`, and optionally `length`, `width`, `height`, in any row order. For dense traffic, one such file replaces thousands of per-vehicle motion files. `Data/traffic_fourLaneRoad.csv` (300 vehicles, 15 s at 2 Hz) is the demo's file; the demo writes it if it is missing.
 
-**Motions in memory** (the `Motions=` input of `fcn_AnimateCar3D_buildCatalog`): a structure array matched to the scene list by `Instance`, each with `Time` and `Pose` (K x 3 `[x y yaw]` or K x 6), and optionally `WheelSpin` (`[FL FR RL RR]`), `SteerAngle`, `WheelLift`, `BodyRoll`, `BodyPitch`, `BodyHeave`, and `LightStates`, as from `fcn_CarMesh3D_loadMotionCSV` or `fcn_AnimateCar3D_fillBranchMotions`. To join motions with different fields into one array, give them the same fields (empty where unknown).
+**Motions in memory** (the `Motions=` input of `fcn_AnimateCar3D_buildCatalog` and `fcn_AnimateCar3D_updateCatalog`): a **cell array of motion structures**, matched to the scene list by `Instance`, each with only the fields it needs, for example `Motions={egoMotion, carMotion}` where the ego's motion has wheels and lights and the car's only poses. (A structure array also works, when all the motions have the same fields.) Each motion is checked against the **motion template**; `fcn_AnimateCar3D_buildCatalog()`, called with no inputs, prints it (or returns it, with an output):
+
+| Field | Required | Size | Units | Meaning |
+|---|---|---|---|---|
+| `Instance` | yes | text | | the object's instance name, as in the scene list |
+| `Time` | yes | K x 1 | s | times, increasing |
+| `Pose` | yes | K x 3 or K x 6 | m, rad | `[x y yaw]` or `[x y z roll pitch yaw]`: the ground frame, origin on the ground below the rear axle |
+| `WheelSpin` | | K x 4 | rad | wheel rotation angles `[FL FR RL RR]` |
+| `SteerAngle` | | K x 2 | rad | front road-wheel angles `[left right]`, + to the left |
+| `WheelLift` | | K x 4 | m | each tire's height above the road `[FL FR RL RR]` |
+| `BodyRoll` | | K x 1 | rad | body roll on its wheels, + right side down |
+| `BodyPitch` | | K x 1 | rad | body pitch, + nose down |
+| `BodyHeave` | | K x 1 | m | body heave, + up |
+| `LightStates` | | K x 1 structure | | light states, as from `fcn_CarMesh3D_loadMotionCSV` |
+
+Other fields are ignored, so motions from `fcn_CarMesh3D_loadMotionCSV` (with an `Instance` added) or `fcn_AnimateCar3D_fillBranchMotions` can be given as they are. A field spelled like a template field but differently (`Wheelspin`, `wheel_spin`) is an error that names the right spelling, and a field of the wrong size is an error that names the object and the expected size.
 
 ### The object catalog
 
@@ -415,7 +430,7 @@ Out of scope: a 2D (top-down) mode. It needs different inputs (XY outlines, not 
 
 **Problems found, and how they were handled:**
 - **The cache missed color changes.** The first version of the cache compared only some scene list fields, so after colors were added to the traffic, the demo reloaded the old, colorless catalog. The cache now compares every scene list field, and the test checks a color change.
-- **Motions with different fields cannot be joined** into one MATLAB structure array (the ego's motion had wheels and lights; the traffic file's only poses). The demo gives the traffic motions the same, empty, fields; the README's [Input files](#input-files) notes it.
+- **Motions with different fields cannot be joined** into one MATLAB structure array (the ego's motion had wheels and lights; the traffic file's only poses). At first the demo gave the traffic motions the same, empty, fields. (Fixed 2026_11_20: `Motions=` takes a cell array, each motion with only its own fields, checked against a motion template; see [Input files](#input-files).)
 
 **The design, as built:** (Tiers by distance, below, were replaced on 2026_11_20 by sizes on screen in pixels: see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5) and [The selector and the display criteria](#the-selector-and-the-display-criteria).)
 
@@ -597,22 +612,17 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 1. **A live-loop function** (`fcn_AnimateCar3D_playLive`, say) for the loop in [Live use](#live-use-step-3): watch the folder, update the catalog, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
 2. **Incremental reading in `fcn_AnimateCar3D_watchFolder`:** it reads a grown file whole at each check; for long runs it should read only the new rows.
-3. **Several very simple example scenes**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
-4. **Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog`** (and `fcn_AnimateCar3D_updateCatalog`): today `Motions=` is a structure array, and every element of a structure array must have the same fields, so a motion with wheel and light data (an ego) cannot be joined with one that has only poses (traffic) until the missing fields are added, empty. Instead:
-   - accept a cell array of motion structures, each with only the fields it needs (`Instance`, `Time`, and `Pose` required; the rest optional); keep accepting a structure array;
-   - check each motion against one documented **master motion template**: every field it may have, with its size and units; an unknown field (a misspelled `Wheelspin`, say) is an error, and a field of the wrong size is reported with its motion's name;
-   - copy only the fields each motion has (a loop over its own fields, not all of the template's);
-   - document the template in the function's header, and return it as a helper when the function is called with no inputs (`motionTemplate = fcn_AnimateCar3D_buildCatalog()`).
+3. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
+4. **Path lines for branches** (needs design first): should the player draw them, or should they be objects in the display list like any other? The demo draws them itself for now.
+
+**Done recently** (2026_11_20)
+- Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog` and `fcn_AnimateCar3D_updateCatalog`, each motion with only its own fields, checked against a documented motion template (returned or printed by `fcn_AnimateCar3D_buildCatalog()` with no inputs). See [Input files](#input-files).
 
 ### Someday
 
 - **Simple road assets** to place in scenes: trees, stop signs, curbs, simple buildings, and so on. They may go into their own repository (RoadAssetPlotting, say), once the CarMesh3D work is finished, since they should follow CarMesh3D's structure and workflow (a folder per asset, a standard script, standard checks). For now, AnimateCar3D's simple shapes (boxes, bars, cylinders, pedestrians) stand in.
 - **A scenario-building function:** the demos' simple motion maker (`fcn_INTERNAL_integrateMotion`: speed and curvature over time, with brake lights) could become a function for building scenarios, that is, how each object moves over time.
 - **Limiting the levels used by separately drawn vehicles** (every other level, say), since a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Reconsider if a scene has many vehicles switching levels at once (for example, a camera moving fast).
-
-### Open questions
-
-- Path lines for branches: drawn by the player, or listed as objects in the display list? (The demo draws them itself for now.)
 
 ### Changes wanted in CarMesh3D
 

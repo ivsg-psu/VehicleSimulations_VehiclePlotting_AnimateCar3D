@@ -34,7 +34,10 @@ function [catalog, updateInfo, selectorState] = fcn_AnimateCar3D_updateCatalog(c
 %      color, and so on).
 %
 %      Motions: motions in memory for the added rows, matched by their
-%      Instance field (as for fcn_AnimateCar3D_buildCatalog).
+%      Instance field: a cell array of motion structures, each with only
+%      the fields it needs, or a structure array. Each is checked against
+%      the motion template (see fcn_AnimateCar3D_buildCatalog; called
+%      with no inputs, it returns the template).
 %
 %      Remove: a cell array of instances to remove. Instances not in the
 %      catalog are ignored.
@@ -91,6 +94,12 @@ function [catalog, updateInfo, selectorState] = fcn_AnimateCar3D_updateCatalog(c
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_updateCatalog
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_updateCatalog
+%   % * Motions can be a cell array of motion structures, each with only the
+%   %   % fields it needs, checked against the motion template (as in
+%   %   % fcn_AnimateCar3D_buildCatalog)
 
 % TO-DO:
 %
@@ -177,8 +186,8 @@ if 0==flag_max_speed
         if ~isempty(options.Add) && ~(isstruct(options.Add) && all(isfield(options.Add,{'Instance','Role','MeshID','MotionFile'})))
             error('Add must be scene list rows (see fcn_AnimateCar3D_loadSceneList)');
         end
-        if ~isempty(options.Motions) && ~(isstruct(options.Motions) && all(isfield(options.Motions,{'Instance','Time','Pose'})))
-            error('Motions must be a structure array with fields Instance, Time, and Pose');
+        if ~isempty(options.Motions) && ~(isstruct(options.Motions) || iscell(options.Motions))
+            error('Motions must be a cell array of motion structures, or a structure array');
         end
 
         % Check the Remove input
@@ -260,10 +269,7 @@ for ith_object = 1:numel(objects)
         nameToIndex(objects(ith_object).Instance) = ith_object;
     end
 end
-motionNames = {};
-if ~isempty(options.Motions)
-    motionNames = {options.Motions.Instance};
-end
+[motionList, motionNames] = fcn_INTERNAL_motionList(options.Motions);
 
 updateInfo = struct('Added',{cell(1,0)}, 'Replaced',{cell(1,0)}, 'Removed',{cell(1,0)}, ...
     'NumGridChanges',0, 'UpdateSeconds',0);
@@ -326,19 +332,19 @@ for ith_row = 1:numel(addRows)
     memoryIndex = find(strcmp(motionNames, thisName), 1, 'last');
     flagKeep = false;
     if ~isempty(memoryIndex)
-        motion = fcn_INTERNAL_normalizeMotion(options.Motions(memoryIndex));
+        motion = fcn_INTERNAL_normalizeMotion(motionList{memoryIndex}, thisName);
         flagKeep = true;
     elseif ~isempty(row.MotionFile)
         if ~isfile(row.MotionFile)
             error('Motion file not found for %s: %s', thisName, row.MotionFile);
         end
-        motion = fcn_INTERNAL_normalizeMotion(fcn_CarMesh3D_loadMotionCSV(row.MotionFile, FigNum=-1));
+        motion = fcn_INTERNAL_normalizeMotion(fcn_CarMesh3D_loadMotionCSV(row.MotionFile, FigNum=-1), thisName);
         flagKeep = any(strcmp(row.Role, keepRoles)) || ~isempty(row.BranchOf);
     elseif ~flagWasEmpty && oldObject.MotionIndex > 0
         motion = catalog.Motions(oldObject.MotionIndex);
         flagKeep = true;
     elseif ~flagWasEmpty && ~isempty(oldObject.MotionFile)
-        motion = fcn_INTERNAL_normalizeMotion(fcn_CarMesh3D_loadMotionCSV(oldObject.MotionFile, FigNum=-1));
+        motion = fcn_INTERNAL_normalizeMotion(fcn_CarMesh3D_loadMotionCSV(oldObject.MotionFile, FigNum=-1), thisName);
         thisObject.MotionFile = oldObject.MotionFile;
     else
         error('The object %s has no motion: give it a motionFile, or a motion in Motions', thisName);
@@ -509,6 +515,84 @@ function flagEmpty = fcn_INTERNAL_isEmptySlot(thisObject)
 flagEmpty = ~thisObject.IsStatic && isempty(thisObject.ThinTime);
 end % Ends fcn_INTERNAL_isEmptySlot
 
+%% fcn_INTERNAL_motionTemplate
+function motionTemplate = fcn_INTERNAL_motionTemplate
+% The master motion template: every field a motion in memory may have,
+% each with whether it is required, its allowed column counts ([] for
+% text), its class, units, and meaning (see the header)
+fieldRows = {
+    'Instance',    true,  [],    'char',   '-',     'the object''s instance name, as in the scene list'
+    'Time',        true,  1,     'double', 's',     'times, increasing'
+    'Pose',        true,  [3 6], 'double', 'm, rad', '[x y yaw] or [x y z roll pitch yaw]: the ground frame, origin on the ground below the rear axle'
+    'WheelSpin',   false, 4,     'double', 'rad',   'wheel rotation angles [FL FR RL RR]'
+    'SteerAngle',  false, 2,     'double', 'rad',   'front road-wheel angles [left right], + to the left'
+    'WheelLift',   false, 4,     'double', 'm',     'each tire''s height above the road [FL FR RL RR]'
+    'BodyRoll',    false, 1,     'double', 'rad',   'body roll on its wheels, + right side down'
+    'BodyPitch',   false, 1,     'double', 'rad',   'body pitch, + nose down'
+    'BodyHeave',   false, 1,     'double', 'm',     'body heave, + up'
+    'LightStates', false, 1,     'struct', '-',     'light states (a K x 1 structure array, as from fcn_CarMesh3D_loadMotionCSV)'
+    };
+motionTemplate = struct;
+for ith_field = 1:size(fieldRows,1)
+    motionTemplate.(fieldRows{ith_field,1}) = struct('Required',fieldRows{ith_field,2}, 'Columns',fieldRows{ith_field,3}, ...
+        'Class',fieldRows{ith_field,4}, 'Units',fieldRows{ith_field,5}, 'Description',fieldRows{ith_field,6});
+end
+end % Ends fcn_INTERNAL_motionTemplate
+
+%% fcn_INTERNAL_printMotionTemplate
+function fcn_INTERNAL_printMotionTemplate(motionTemplate)
+% The template as a table in the command window
+fieldNames = fieldnames(motionTemplate);
+fprintf(1,'\nMotion template (K: number of time steps):\n');
+fprintf(1,'  %-12s %-9s %-10s %-7s %s\n', 'Field', 'Required', 'Size', 'Units', 'Meaning');
+for ith_field = 1:numel(fieldNames)
+    thisField = motionTemplate.(fieldNames{ith_field});
+    if isempty(thisField.Columns)
+        sizeText = 'text';
+    else
+        sizeText = ['K x ' strjoin(arrayfun(@num2str, thisField.Columns, 'UniformOutput', false), ' or ')];
+    end
+    requiredText = 'no';
+    if thisField.Required
+        requiredText = 'yes';
+    end
+    fprintf(1,'  %-12s %-9s %-10s %-7s %s\n', fieldNames{ith_field}, requiredText, sizeText, thisField.Units, thisField.Description);
+end
+fprintf(1,'Other fields are ignored.\n\n');
+end % Ends fcn_INTERNAL_printMotionTemplate
+
+%% fcn_INTERNAL_motionList
+function [motionList, motionNames] = fcn_INTERNAL_motionList(motions)
+% The motions as a cell array of single structures (from a cell array or
+% a structure array), and their Instance names
+if isempty(motions)
+    motionList = cell(0,1);
+elseif isstruct(motions)
+    motionList = num2cell(motions(:));
+elseif iscell(motions)
+    motionList = motions(:);
+else
+    error('AnimateCar3D:motionList', 'Motions must be a cell array of motion structures, or a structure array');
+end
+motionNames = cell(numel(motionList),1);
+for ith_motion = 1:numel(motionList)
+    thisMotion = motionList{ith_motion};
+    if ~(isstruct(thisMotion) && isscalar(thisMotion))
+        error('AnimateCar3D:motionList', 'Motion %d of Motions is not a single structure', ith_motion);
+    end
+    if ~isfield(thisMotion,'Instance') || ~(ischar(thisMotion.Instance) || (isstring(thisMotion.Instance) && isscalar(thisMotion.Instance))) ...
+            || strlength(thisMotion.Instance)==0
+        error('AnimateCar3D:motionField', 'Motion %d of Motions has no Instance name (text)', ith_motion);
+    end
+    motionNames{ith_motion} = char(thisMotion.Instance);
+    for requiredName = {'Time','Pose'}
+        if ~isfield(thisMotion, requiredName{1}) || isempty(thisMotion.(requiredName{1})) || ~isnumeric(thisMotion.(requiredName{1}))
+            error('AnimateCar3D:motionField', 'The motion of %s has no %s (required, numeric)', motionNames{ith_motion}, requiredName{1});
+        end
+    end
+end
+end % Ends fcn_INTERNAL_motionList
+
 %% fcn_INTERNAL_emptyMotion
 function motion = fcn_INTERNAL_emptyMotion
 % One full motion, with every field the selector reads
@@ -517,18 +601,83 @@ motion = struct('Time',zeros(0,1), 'Pose',zeros(0,6), 'WheelSpin',[], 'SteerAngl
 end % Ends fcn_INTERNAL_emptyMotion
 
 %% fcn_INTERNAL_normalizeMotion
-function motion = fcn_INTERNAL_normalizeMotion(inputMotion)
-% Copy the fields the selector reads; make Pose K x 6 and Time K x 1
+function motion = fcn_INTERNAL_normalizeMotion(inputMotion, motionName)
+% Check one motion against the template, looping over its own fields
+% only, and copy the fields the selector reads (Time made K x 1, Pose
+% K x 6). A field spelled like a template field but differently is an
+% error; other fields are ignored.
+motionTemplate = fcn_INTERNAL_motionTemplate;
+templateNames = fieldnames(motionTemplate);
+templateKeys = lower(strrep(templateNames, '_', ''));
 motion = fcn_INTERNAL_emptyMotion;
-motion.Time = double(inputMotion.Time(:));
-pose = double(inputMotion.Pose);
-if size(pose,2)==3
-    pose = [pose(:,1:2), zeros(size(pose,1),3), pose(:,3)];
+
+% Required fields
+for requiredName = {'Time','Pose'}
+    if ~isfield(inputMotion, requiredName{1}) || isempty(inputMotion.(requiredName{1}))
+        error('AnimateCar3D:motionField', 'The motion of %s has no %s (required)', motionName, requiredName{1});
+    end
 end
-motion.Pose = pose;
-for fieldName = {'WheelSpin','SteerAngle','WheelLift','BodyRoll','BodyPitch','BodyHeave','LightStates'}
-    if isfield(inputMotion, fieldName{1})
-        motion.(fieldName{1}) = inputMotion.(fieldName{1});
+timeValues = inputMotion.Time;
+if ~isnumeric(timeValues) || ~isvector(timeValues)
+    error('AnimateCar3D:motionSize', 'The motion of %s: Time must be a K x 1 vector of times', motionName);
+end
+K = numel(timeValues);
+
+% Each field given
+givenNames = fieldnames(inputMotion);
+for ith_field = 1:numel(givenNames)
+    givenName = givenNames{ith_field};
+    if isfield(motionTemplate, givenName)
+        if strcmp(givenName,'Instance')
+            continue;
+        end
+    else
+        matchIndex = find(strcmpi(templateKeys, strrep(givenName, '_', '')), 1);
+        if ~isempty(matchIndex)
+            error('AnimateCar3D:motionField', 'The motion of %s has a field %s: did you mean %s?', ...
+                motionName, givenName, templateNames{matchIndex});
+        end
+        continue;                                   % (not a field the animator reads)
+    end
+    value = inputMotion.(givenName);
+    if isempty(value)
+        continue;                                   % (empty: not given)
+    end
+    fieldRule = motionTemplate.(givenName);
+    if strcmp(fieldRule.Class,'struct')
+        flagGoodClass = isstruct(value);
+        flagGoodSize = numel(value)==K;
+    else
+        flagGoodClass = isnumeric(value) || islogical(value);
+        if strcmp(givenName,'Time')
+            flagGoodSize = true;
+        else
+            flagGoodSize = size(value,1)==K && any(size(value,2)==fieldRule.Columns);
+        end
+    end
+    if ~flagGoodClass
+        error('AnimateCar3D:motionSize', 'The motion of %s: %s must be %s', motionName, givenName, fieldRule.Class);
+    end
+    if ~flagGoodSize
+        if strcmp(fieldRule.Class,'struct')
+            expectedText = sprintf('%d x 1 (one per time step)', K);
+        else
+            expectedText = sprintf('%d x %s', K, strjoin(arrayfun(@num2str, fieldRule.Columns, 'UniformOutput', false), ' or '));
+        end
+        error('AnimateCar3D:motionSize', 'The motion of %s: %s is %d x %d; expected %s', motionName, givenName, ...
+            size(value,1), size(value,2), expectedText);
+    end
+    switch givenName
+        case 'Time'
+            motion.Time = double(value(:));
+        case 'Pose'
+            pose = double(value);
+            if size(pose,2)==3
+                pose = [pose(:,1:2), zeros(size(pose,1),3), pose(:,3)];
+            end
+            motion.Pose = pose;
+        otherwise
+            motion.(givenName) = value;
     end
 end
 end % Ends fcn_INTERNAL_normalizeMotion

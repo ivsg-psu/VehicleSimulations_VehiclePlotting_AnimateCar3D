@@ -104,6 +104,28 @@ assert(isequal(get(gcf,'Number'),figNum));
 close all;
 fprintf(1,'Figure: 2XXXXXX: TEST cases\n');
 
+%% TEST case: Motions as a cell array, each with only its own fields
+% The branches as fcn_AnimateCar3D_fillBranchMotions makes them (with its
+% extra fields), and an ego with wheel spin: the same catalog as from the
+% structure array
+egoFull = egoMotion;
+egoFull.WheelSpin = repmat(10*egoTime/0.3, 1, 4);
+motionCell = [{egoFull, car1Motion, car2Motion}, num2cell(branchList(:)')];
+cellCatalog = fcn_AnimateCar3D_updateCatalog([], Add=sceneList, Motions=motionCell);
+arrayCatalog = fcn_AnimateCar3D_updateCatalog([], Add=sceneList, Motions=motions);
+assert(isequaln(cellCatalog.Objects, arrayCatalog.Objects));
+egoIndex = cellCatalog.Objects(strcmp({cellCatalog.Objects.Instance},'ego')).MotionIndex;
+assert(isequal(cellCatalog.Motions(egoIndex).WheelSpin, egoFull.WheelSpin));
+% A misspelled field is an error here too
+errorID = '';
+try
+    fcn_AnimateCar3D_updateCatalog(cellCatalog, Add=sceneList(2), Motions={setfield(car1Motion,'bodyroll',zeros(size(carTime)))});
+catch ME
+    errorID = ME.identifier;
+    errorText = ME.message;
+end
+assert(strcmp(errorID,'AnimateCar3D:motionField') && contains(errorText,'did you mean BodyRoll'));
+
 %% TEST case: A grown motion replaces the object; the selector sees the new part
 figNum = 20001;
 titleString = sprintf('TEST case: A grown motion replaces the object; the selector sees the new part');

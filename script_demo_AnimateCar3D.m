@@ -41,6 +41,8 @@
 %   % * Detail levels set by size on screen (CarMesh3D 2026_11_20): the
 %   %   % meshes load with their levels, the selector gets the mesh set,
 %   %   % and the display criteria use sizes on screen, not distances
+%   % * Motions given as cell arrays where they have different fields
+%   %   % (steps 6 and 8), with no empty fields added
 
 
 % TO-DO:
@@ -370,10 +372,9 @@ egoTime = (0:0.05:15)';
 egoDrive = fcn_INTERNAL_integrateMotion('ego', egoTime, [-10 -1.8 0], 0, @(t) 13+0*t, @(t) 0*t, priusSpec);
 egoRow = fcn_AnimateCar3D_loadSceneList(struct('instance','ego','role','ego','meshID',priusID,'color',[0.05 0.2 0.6]));
 sceneList = [egoRow; trafficList];
-for fieldName = {'WheelSpin','SteerAngle','LightStates'}    % same fields as the ego's motion, to join them
-    [trafficMotions.(fieldName{1})] = deal([]);
-end
-catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoDrive; trafficMotions], StaticScene=staticScene, ...
+% (Motions as a cell array: the ego's has wheels and lights, the
+% traffic's only poses)
+catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[{egoDrive}; num2cell(trafficMotions)], StaticScene=staticScene, ...
     CacheFile=fullfile(tempdir,'AnimateCar3D_demoTrafficCatalog.mat'));
 criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=250);
 
@@ -587,8 +588,8 @@ walkerColors = [0.80 0.20 0.20; 0.20 0.55 0.25; 0.95 0.75 0.10; 0.45 0.25 0.65; 
 walkerStarts = [0 0.4 0.9 1.3 1.6 2.0 0.2];
 walkerX = [36.4 37.6 36.9 38.2 37.2 36.6 38.0];
 gateRows = struct('instance','ego', 'role','ego', 'meshID',priusID, 'color',[0.05 0.2 0.6], 'timeOffset',0, 'height',NaN);
-gateMotions = struct('Instance','ego', 'Time',egoGate.Time, 'Pose',egoGate.Pose, 'WheelSpin',egoGate.WheelSpin, ...
-    'SteerAngle',egoGate.SteerAngle, 'LightStates',egoGate.LightStates);
+gateMotions = {struct('Instance','ego', 'Time',egoGate.Time, 'Pose',egoGate.Pose, 'WheelSpin',egoGate.WheelSpin, ...
+    'SteerAngle',egoGate.SteerAngle, 'LightStates',egoGate.LightStates)};      % a cell array: each motion has only its own fields
 for ith_walker = 1:numel(walkerStarts)
     walkTime = (0:0.2:8.5)';
     if ith_walker < numel(walkerStarts)
@@ -599,9 +600,8 @@ for ith_walker = 1:numel(walkerStarts)
     walkerName = sprintf('walker%d', ith_walker);
     gateRows(end+1) = struct('instance',walkerName, 'role','pedestrian', 'meshID','pedestrian', ...
         'color',walkerColors(ith_walker,:), 'timeOffset',walkerStarts(ith_walker), 'height',1.6+0.1*mod(ith_walker,3)); %#ok<SAGROW>
-    gateMotions(end+1,1) = struct('Instance',walkerName, 'Time',walkTime, ...
-        'Pose',[walkerX(ith_walker)*ones(size(walkTime)), walkY, heading*ones(size(walkTime))], ...
-        'WheelSpin',[], 'SteerAngle',[], 'LightStates',[]); %#ok<SAGROW>
+    gateMotions{end+1,1} = struct('Instance',walkerName, 'Time',walkTime, ...
+        'Pose',[walkerX(ith_walker)*ones(size(walkTime)), walkY, heading*ones(size(walkTime))]); %#ok<SAGROW>
 end
 
 % The gate arm: on a post at the south edge of the ego's lane, pointing
@@ -611,9 +611,8 @@ gateTime = (0:0.2:16)';
 gatePitch = -1.45*min(1, max(0, (gateTime-11.2)/1.4));
 gateRows(end+1) = struct('instance','gate', 'role','movingItem', 'meshID','bar', 'color',[0.95 0.85 0.10], ...
     'timeOffset',0, 'height',NaN);
-gateMotions(end+1,1) = struct('Instance','gate', 'Time',gateTime, ...
-    'Pose',[85*ones(size(gateTime)), -4.0*ones(size(gateTime)), ones(size(gateTime)), zeros(size(gateTime)), gatePitch, (pi/2)*ones(size(gateTime))], ...
-    'WheelSpin',[], 'SteerAngle',[], 'LightStates',[]);
+gateMotions{end+1,1} = struct('Instance','gate', 'Time',gateTime, ...
+    'Pose',[85*ones(size(gateTime)), -4.0*ones(size(gateTime)), ones(size(gateTime)), zeros(size(gateTime)), gatePitch, (pi/2)*ones(size(gateTime))]);
 gateList = fcn_AnimateCar3D_loadSceneList(gateRows);
 
 % Static: posts along both sidewalks, the gate's post, and two buildings

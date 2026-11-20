@@ -36,6 +36,8 @@ sceneRows = struct('instance', {'ego','conf1','conf1_branch1','conf1_branch2','c
     'branchOf', {'','','conf1','conf1','conf1','',''}, 'branchID', {0,0,1,2,3,0,0}, ...
     'motionFile', {'','','','','','',car2File}, 'timeOffset', {0,0,0,0,0,0,1});
 sceneList = fcn_AnimateCar3D_loadSceneList(sceneRows);
+% (As a structure array, every motion needs the same fields; see the
+% cell array test below for motions with different fields)
 motions = [egoMotion; carMotion];
 branchList = [branchMotions.Parent; branchMotions.Branches];
 for ith_motion = 1:numel(branchList)
@@ -119,6 +121,111 @@ assert(isequal(get(gcf,'Number'),figNum));
 
 close all;
 fprintf(1,'Figure: 2XXXXXX: TEST cases\n');
+
+%% TEST case: Motions as a cell array, each with only its own fields
+figNum = 20002;
+titleString = sprintf('TEST case: Motions as a cell array, each with only its own fields');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+% The ego with wheel spin and steering; car1 with poses only; the
+% branches as fcn_AnimateCar3D_fillBranchMotions makes them (with its
+% own extra fields, BranchOf and Curvature); car2 from its motion file,
+% with an Instance added (and the file reader's extra fields)
+egoFull = egoMotion;
+egoFull.WheelSpin = repmat(10*egoTime/0.3, 1, 4);
+egoFull.SteerAngle = zeros(numel(egoTime), 2);
+car2Motion = fcn_CarMesh3D_loadMotionCSV(car2File, FigNum=-1);
+car2Motion.Instance = 'car2';
+motionCell = [{egoFull, carMotion, car2Motion}, num2cell(branchList(:)')];
+catalogCell = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=motionCell, StaticScene=staticScene);
+catalogArray = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=motions, StaticScene=staticScene);
+
+% The same objects as from the structure array (car2 is now kept in
+% memory: it was given there), with each motion's own fields
+objectNames = {catalogCell.Objects.Instance};
+flagOthers = ~strcmp(objectNames,'car2');
+cellObjects = rmfield(catalogCell.Objects(flagOthers), 'MotionIndex');
+arrayObjects = rmfield(catalogArray.Objects(flagOthers), 'MotionIndex');
+assert(isequaln(cellObjects, arrayObjects));
+egoIndex = catalogCell.Objects(strcmp(objectNames,'ego')).MotionIndex;
+assert(isequal(catalogCell.Motions(egoIndex).WheelSpin, egoFull.WheelSpin));
+assert(isequal(size(catalogCell.Motions(egoIndex).Pose), [numel(egoTime) 6]));    % made K x 6
+car1Index = catalogCell.Objects(strcmp(objectNames,'car1')).MotionIndex;
+assert(isempty(catalogCell.Motions(car1Index).WheelSpin));
+car2Object = catalogCell.Objects(strcmp(objectNames,'car2'));
+assert(car2Object.MotionIndex>0 && abs(car2Object.StartTime - 1) < 1e-9);
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
+
+%% TEST case: The motion template, from a call with no inputs
+figNum = 20003;
+titleString = sprintf('TEST case: The motion template, from a call with no inputs');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+motionTemplate = fcn_AnimateCar3D_buildCatalog();
+assert(isequal(fieldnames(motionTemplate)', {'Instance','Time','Pose','WheelSpin','SteerAngle','WheelLift', ...
+    'BodyRoll','BodyPitch','BodyHeave','LightStates'}));
+assert(motionTemplate.Instance.Required && motionTemplate.Time.Required && motionTemplate.Pose.Required);
+assert(~motionTemplate.WheelSpin.Required && motionTemplate.WheelSpin.Columns==4);
+assert(isequal(motionTemplate.Pose.Columns, [3 6]) && strcmp(motionTemplate.LightStates.Class,'struct'));
+assert(all(structfun(@(f) all(isfield(f,{'Required','Columns','Class','Units','Description'})), motionTemplate)));
+printedText = evalc('fcn_AnimateCar3D_buildCatalog()');      % no output: printed
+assert(contains(printedText,'Motion template') && contains(printedText,'SteerAngle') && contains(printedText,'K x 4'));
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
+
+%% TEST case: A misspelled field, a field of the wrong size, and a missing Pose are errors
+figNum = 20004;
+titleString = sprintf('TEST case: A misspelled field, a field of the wrong size, and a missing Pose are errors');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+goodOthers = [{egoMotion}, num2cell(branchList(:)')];
+badMotions = {setfield(carMotion, 'Wheelspin', zeros(numel(carTime),4)), ...    % misspelled
+    setfield(carMotion, 'wheel_spin', zeros(numel(carTime),4)), ...             % misspelled
+    setfield(carMotion, 'WheelSpin', zeros(numel(carTime),3)), ...              % 3 columns, not 4
+    setfield(carMotion, 'BodyRoll', zeros(numel(carTime)-1,1)), ...             % one row short
+    rmfield(carMotion, 'Pose')};                                                % no Pose
+expectedIDs = {'AnimateCar3D:motionField','AnimateCar3D:motionField','AnimateCar3D:motionSize', ...
+    'AnimateCar3D:motionSize','AnimateCar3D:motionField'};
+expectedTexts = {'did you mean WheelSpin','did you mean WheelSpin', sprintf('expected %d x 4', numel(carTime)), ...
+    sprintf('expected %d x 1', numel(carTime)), 'no Pose'};
+for ith_bad = 1:numel(badMotions)
+    errorID = '';
+    try
+        fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[goodOthers, badMotions(ith_bad)], StaticScene=staticScene);
+    catch ME
+        errorID = ME.identifier;
+        errorText = ME.message;
+    end
+    assert(strcmp(errorID, expectedIDs{ith_bad}));
+    assert(contains(errorText, expectedTexts{ith_bad}) && contains(errorText, 'car1'));   % names the object
+end
+% An entry that is not a structure, and a motion with no Instance
+errorID = '';
+try
+    fcn_AnimateCar3D_buildCatalog(sceneList, Motions={egoMotion, 5});
+catch ME
+    errorID = ME.identifier;
+end
+assert(strcmp(errorID, 'AnimateCar3D:motionList'));
+errorID = '';
+try
+    fcn_AnimateCar3D_buildCatalog(sceneList, Motions={rmfield(egoMotion,'Instance')});
+catch ME
+    errorID = ME.identifier;
+end
+assert(strcmp(errorID, 'AnimateCar3D:motionField'));
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
 
 %% TEST case: The cache is used when nothing changed, and rebuilt when something did
 figNum = 20001;
