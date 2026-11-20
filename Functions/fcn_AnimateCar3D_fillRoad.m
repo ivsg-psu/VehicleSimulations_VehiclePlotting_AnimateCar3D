@@ -1,4 +1,4 @@
-function road = fcn_AnimateCar3D_fillRoad(options)
+function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 % fcn_AnimateCar3D_fillRoad
 
 % Fills a road description, laid out as an ASAM OpenDRIVE road, from a
@@ -79,7 +79,7 @@ function road = fcn_AnimateCar3D_fillRoad(options)
 %
 % FORMAT:
 %
-%       road = fcn_AnimateCar3D_fillRoad((Preset=preset), (Length=meters),...
+%       [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad((Preset=preset), (Length=meters),...
 %           (LaneWidth=meters), (LanesEachWay=n), (CenterMark=type),...
 %           (Start=[x y heading]), (Seed=seed), (BuildingSetback=meters),...
 %           (BuildingSides=sides), (BlockLength=meters),...
@@ -130,18 +130,31 @@ function road = fcn_AnimateCar3D_fillRoad(options)
 %
 % OUTPUTS:
 %
-%      road: the road (see above). For 'intersection', a road network: a
+%      road: the road (see above), with EgoStart: the scene's fixed
+%      starting point for a vehicle (Road, LaneID, S, Direction: +1 along
+%      s, -1 against it): the first driving lane on the right, at s = 0;
+%      at the intersection, the west arm's through lane, at its far end,
+%      heading in. For 'intersection', a road network: a
 %      structure with ID, Name, TrafficRule, Units, Roads (the four arms,
 %      each a road as above, starting at the junction and pointing away
 %      from it: on each arm, the left lanes come in and the right lanes
 %      go out), and Junctions: ID, Type, Center, Surfaces (flat
 %      quadrilaterals: Corners 4 x 2, Height, Type) and CurbFaces (Ends
-%      2 x 2, Height), for the area where the arms meet.
+%      2 x 2, Height), for the area where the arms meet, and Connections
+%      (OpenDRIVE <connection>: IncomingRoad, IncomingLane, OutgoingRoad,
+%      OutgoingLane, Turn ('left', 'straight', 'right'), and Path: a road
+%      whose reference line is the lane's center through the junction,
+%      a line, or a line and an arc).
+%
+%      centerlineOptions: the paths a vehicle can take from EgoStart, from
+%      fcn_AnimateCar3D_fillCenterlineOptions (computed only if asked
+%      for).
 %
 % DEPENDENCIES:
 %
-%      fcn_AnimateCar3D_getRoadPoints; for the plot,
-%      fcn_AnimateCar3D_plotRoad
+%      fcn_AnimateCar3D_getRoadPoints,
+%      fcn_AnimateCar3D_fillCenterlineOptions (second output); for the
+%      plot, fcn_AnimateCar3D_plotRoad
 %
 % EXAMPLES:
 %
@@ -409,6 +422,15 @@ else
     for ith_object = 1:numel(road.Objects)
         road.Objects(ith_object).ID = ith_object;
     end
+
+    % The fixed starting point: the first driving lane on the right, at s = 0
+    drivingIDs = [rightLanes(strcmp({rightLanes.Type},'driving')).ID];
+    road.EgoStart = struct('Road',road.ID, 'LaneID',max(drivingIDs), 'S',0, 'Direction',1);
+end
+
+%%%% The paths from the starting point, if asked for
+if nargout > 1
+    centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, FigNum=-1);
 end
 
 %% Plot the results (for debugging)?
@@ -599,7 +621,7 @@ toWorld = @(heading, uv) center + uv(:,1)*[cos(heading) sin(heading)] + uv(:,2)*
 squareCorners = [-1 -1; 1 -1; 1 1; -1 1]*halfSize;
 junction = struct('ID','1', 'Type','default', 'Center',center, ...
     'Surfaces',struct('Corners',toWorld(options.Start(3), squareCorners), 'Height',0, 'Type','driving'), ...
-    'CurbFaces',struct('Ends',{}, 'Height',{}));
+    'CurbFaces',struct('Ends',{}, 'Height',{}), 'Connections',[]);
 uFrom = widthOut + 0.15;
 if halfSize - uFrom > 1e-9
     for ith_arm = 1:4
@@ -611,9 +633,79 @@ if halfSize - uFrom > 1e-9
         junction.CurbFaces(end+1) = struct('Ends',toWorld(heading, [uFrom widthIn; halfSize widthIn]), 'Height',0.15);
     end
 end
+% Connections through the junction (OpenDRIVE <connection>): from each
+% lane coming in, to the lane going out that its arrow allows. Arm k's
+% traffic comes in heading opposite to the arm; a left turn leaves on arm
+% k-1, straight on arm k+2, a right turn on arm k+1.
+connections = struct('ID',{}, 'IncomingRoad',{}, 'IncomingLane',{}, 'OutgoingRoad',{}, 'OutgoingLane',{}, ...
+    'Turn',{}, 'Path',{});
+for ith_arm = 1:4
+    for ith_lane = 1:Nin
+        if ith_lane==1
+            turns = {'left'};
+        elseif ith_lane==Nin && Nin==2
+            turns = {'straight','right'};
+        elseif ith_lane==Nin
+            turns = {'right'};
+        else
+            turns = {'straight'};
+        end
+        for thisTurn = turns
+            switch thisTurn{1}
+                case 'left'
+                    outArm = mod(ith_arm - 2, 4) + 1;
+                    outLane = -1;
+                case 'straight'
+                    outArm = mod(ith_arm + 1, 4) + 1;
+                    outLane = -ith_lane;
+                case 'right'
+                    outArm = mod(ith_arm, 4) + 1;
+                    outLane = -Nout;
+            end
+            pointIn = fcn_AnimateCar3D_getRoadPoints(roads(ith_arm), 0, LaneID=ith_lane, FigNum=-1);
+            pointOut = fcn_AnimateCar3D_getRoadPoints(roads(outArm), 0, LaneID=outLane, FigNum=-1);
+            headingIn = pointIn(3) + pi;
+            segments = fcn_INTERNAL_turnSegments(pointIn(1:2), headingIn, pointOut(1:2), pointOut(3));
+            pathView = fcn_INTERNAL_planView(segments, [pointIn(1:2) headingIn]);
+            path = struct('ID',sprintf('c%d', numel(connections)+1), 'PlanView',pathView, ...
+                'Length',pathView(end).S + pathView(end).Length);
+            connections(end+1) = struct('ID',numel(connections)+1, 'IncomingRoad',roads(ith_arm).ID, ...
+                'IncomingLane',ith_lane, 'OutgoingRoad',roads(outArm).ID, 'OutgoingLane',outLane, ...
+                'Turn',thisTurn{1}, 'Path',path); %#ok<AGROW>
+        end
+    end
+end
+junction.Connections = connections;
+
 network = struct('ID','intersection', 'Name','intersection', 'TrafficRule','RHT', 'Units','meters, radians', ...
-    'Roads',roads, 'Junctions',junction);
+    'Roads',roads, 'Junctions',junction, ...
+    'EgoStart',struct('Road','3', 'LaneID',2, 'S',armLength, 'Direction',-1));
 end % Ends fcn_INTERNAL_intersection
+
+%% fcn_INTERNAL_turnSegments
+function segments = fcn_INTERNAL_turnSegments(pointIn, headingIn, pointOut, headingOut)
+% The path through a junction: a line (straight on), or for a quarter
+% turn a line and an arc (or an arc and a line) that join the lane
+% centers at both ends, with matching headings
+offset = [cos(headingIn) sin(headingIn); -sin(headingIn) cos(headingIn)]*(pointOut(:) - pointIn(:));
+along = offset(1);
+sideways = offset(2);
+turnAngle = atan2(sin(headingOut - headingIn), cos(headingOut - headingIn));
+if abs(turnAngle) < 1e-6
+    segments = fcn_INTERNAL_segment('line', hypot(along, sideways), 0, 0);
+    return;
+end
+radius = min(along, abs(sideways));
+curvature = sign(sideways)/radius;
+arc = fcn_INTERNAL_segment('arc', radius*abs(turnAngle), curvature, curvature);
+if along - abs(sideways) > 1e-9
+    segments = [fcn_INTERNAL_segment('line', along - abs(sideways), 0, 0); arc];
+elseif abs(sideways) - along > 1e-9
+    segments = [arc; fcn_INTERNAL_segment('line', abs(sideways) - along, 0, 0)];
+else
+    segments = arc;
+end
+end % Ends fcn_INTERNAL_turnSegments
 
 %% fcn_INTERNAL_nearSideHeight
 function buildingHeight = fcn_INTERNAL_nearSideHeight(heightDraw, storyDraw)

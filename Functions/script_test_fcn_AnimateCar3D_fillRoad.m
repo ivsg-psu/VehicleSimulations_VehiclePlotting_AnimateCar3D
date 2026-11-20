@@ -197,6 +197,34 @@ assert(numel(network.Junctions.Surfaces)==1 + 4*2 && numel(network.Junctions.Cur
 [~, tOut] = fcn_AnimateCar3D_getRoadPoints(network.Roads(3), 10, LaneID=-2);
 assert(abs(tIn + tOut) < 1e-9 && abs(tIn - 5.4) < 1e-9);
 
+%% TEST case: Junction connections: turning paths meet the lanes, headings match
+figNum = 20008;
+titleString = sprintf('TEST case: Junction connections: turning paths meet the lanes, headings match');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+for flagRightTurn = [false true]
+    network = fcn_AnimateCar3D_fillRoad(Preset='intersection', RightTurnLane=flagRightTurn);
+    connections = network.Junctions.Connections;
+    assert(numel(connections)==4*3 && sum(strcmp({connections.Turn},'left'))==4 && sum(strcmp({connections.Turn},'right'))==4);
+    for ith_connection = 1:numel(connections)
+        thisConnection = connections(ith_connection);
+        pathEnds = fcn_AnimateCar3D_getRoadPoints(thisConnection.Path, [0; thisConnection.Path.Length]);
+        inRoad = network.Roads(strcmp({network.Roads.ID}, thisConnection.IncomingRoad));
+        outRoad = network.Roads(strcmp({network.Roads.ID}, thisConnection.OutgoingRoad));
+        laneIn = fcn_AnimateCar3D_getRoadPoints(inRoad, 0, LaneID=thisConnection.IncomingLane);
+        laneOut = fcn_AnimateCar3D_getRoadPoints(outRoad, 0, LaneID=thisConnection.OutgoingLane);
+        assert(norm(pathEnds(1,1:2) - laneIn(1:2)) < 1e-3 && norm(pathEnds(2,1:2) - laneOut(1:2)) < 1e-3);
+        headingError = @(a, b) abs(atan2(sin(a - b), cos(a - b)));
+        assert(headingError(pathEnds(1,3), laneIn(3) + pi) < 1e-6 && headingError(pathEnds(2,3), laneOut(3)) < 1e-6);
+    end
+end
+assert(strcmp(network.EgoStart.Road,'3') && network.EgoStart.LaneID==2 && network.EgoStart.Direction==-1);
+road = fcn_AnimateCar3D_fillRoad(Preset='interstate');
+assert(road.EgoStart.LaneID==-3 && road.EgoStart.S==0);
+[~, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset='twoLane');
+assert(iscell(centerlineOptions) && numel(centerlineOptions)==2);
+
 %% TEST case: Seed: the same Seed gives the same scene, whatever MATLAB's rng
 figNum = 20007;
 titleString = sprintf('TEST case: Seed: the same Seed gives the same scene, whatever MATLAB''s rng');

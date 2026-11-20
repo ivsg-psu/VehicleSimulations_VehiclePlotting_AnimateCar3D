@@ -402,6 +402,7 @@ Most example scenarios need a road under them. Three prototype functions describ
 |---|---|
 | `fcn_AnimateCar3D_fillRoad` | Fills a road from a preset (`'twoLane'`, `'curvy'`, `'interstate'`, `'urbanStreet'`, `'neighborhood'`) with options (length, lane width, lanes each way, center mark, start pose, random seed, building setback and sides, block length) |
 | `fcn_AnimateCar3D_getRoadPoints` | World points `[x y heading]` from road coordinates: s along the reference line, t across it (left positive), or a lane and an offset, as an OpenSCENARIO `LanePosition`. To place a vehicle, use `DrivingLane` (the k-th driving lane: -1 is the first on the right), which skips medians and shoulders; OpenDRIVE's `LaneID` -1 is the first lane of any type (on the interstate, the median) |
+| `fcn_AnimateCar3D_fillCenterlineOptions` | The paths a vehicle can take from a starting point (default: the scene's fixed `EgoStart`), as lane centerlines in XY, with headings, distances, and routes: see [Centerline options](#centerline-options-for-path-following-and-decision-making-tests) |
 | `fcn_AnimateCar3D_plotRoad` | Draws the lane surfaces (colored by lane type, with curb steps), the road marks, and the road objects, in three patches (plus one per opacity for see-through objects: `NearSideAlpha`, 0.3, for near-side buildings and trees; `BuildingAlpha` for all buildings). Curves are sampled every 2 m, straight lines every 50 m: the two-lane road is 74 faces, the neighborhood (1200 m, with houses) about 2,400 |
 
 **How a road is described** (OpenDRIVE terms in brackets):
@@ -414,6 +415,21 @@ Most example scenarios need a road under them. Three prototype functions describ
 - **Procedural, and repeatable:** the lane layouts are fixed by each preset and its options; buildings, houses, parks, and pedestrians are placed at random from `Seed`, so the same `Seed` always gives the same scene, and another `Seed` a different one.
 
 Colors are flat and simple. Only the road marks and crosswalks are white or yellow, so nothing else looks like a lane line.
+
+### Centerline options (for path-following and decision-making tests)
+
+Every scene has a fixed starting point, `road.EgoStart`: the first driving lane on the right at the start of the road, or, at the intersection, the west arm's through lane at its far end, heading in. From there, `fcn_AnimateCar3D_fillCenterlineOptions` lists the paths a vehicle can take, as lane centerlines in XY (also the second output of `fcn_AnimateCar3D_fillRoad`):
+
+```matlab
+[road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset='intersection');
+for k = 1:numel(centerlineOptions)
+    fprintf('%s: %s\n', centerlineOptions{k}.Name, centerlineOptions{k}.Description);
+end
+```
+
+Each option (a cell of the cell array) has `Name`, `Description`, `XY` (N x 2, about every 1 m), `Heading` (direction of travel), `S` (distance along the path), and `Route` (the roads and lanes in order, as an OpenSCENARIO route). The options are: staying in lane; each other lane going the same way (the lane change is the user's to plan); the oncoming lane, where the center line may be crossed (the two-lane road and the neighborhood, not the urban street's double yellow or the interstate's median); and at a junction, each turn the lane's arrow allows, through the junction's connections (OpenDRIVE `<connection>`: a line, or a line and an arc), then on to the end of the far arm. `Start=` gives another starting point.
+
+![Centerline options](Images/centerlineOptions_prototype.png)
 
 ### The simple scenes
 
@@ -713,9 +729,10 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 1. **Example scenarios, simplest first.** Each is a road (above), a scene list, and motions, small enough to read in a minute; they come first in the demos.
    - *One vehicle, one maneuver (all defaults):* a lane change at constant speed on the two-lane road; following the curvy road at constant speed; following the curvy road with changing speed.
    - *Then several objects:* one car passing another; a car following another; a car stopping for a pedestrian at a crosswalk.
-2. **Cross streets for the urban scene**, from the intersection prototype (done in both lane layouts); and connecting roads through junctions (OpenDRIVE `<connection>`), so vehicles can be placed on turning paths.
+2. **Cross streets for the urban scene**, from the intersection prototype; centerline options through more than one junction.
 3. **A time option for `fcn_AnimateCar3D_playLive`** (optional input): a target frame rate, and how the data's time is tied to the clock: (a) **exactly**, the time in the data matches the clock (for example, both in seconds since the start of the run, or both clock times); or (b) **relative**, one second of clock time moves the animation one second on, from wherever it starts. Today it draws as fast as it can, with the shown time moving at `PlaybackSpeed` with the clock, which is close to (b).
 **Done recently** (2026_11_20)
+- Centerline options: a fixed start in every scene (`EgoStart`), junction connections (turning paths), and `fcn_AnimateCar3D_fillCenterlineOptions` (also `fcn_AnimateCar3D_fillRoad`'s second output).
 - A road prototype laid out like ASAM OpenDRIVE (with an intersection in two lane layouts, and pedestrians standing on sidewalks): `fcn_AnimateCar3D_fillRoad`, `fcn_AnimateCar3D_getRoadPoints`, `fcn_AnimateCar3D_plotRoad`, with presets for the two-lane, curvy, interstate, and urban scenes (see [Roads and simple scenes](#roads-and-simple-scenes-prototype)).
 - Reading only the new rows of grown files in `fcn_AnimateCar3D_watchFolder`, and handling replaced and deleted files (see [Live use](#live-use-step-3)).
 - A live-loop function, `fcn_AnimateCar3D_playLive`: the whole live loop in one call (or one step per call), with a CarMesh3D camera, caption, and GIF frames. See [Live use](#live-use-step-3); demo step 7 now uses it.
