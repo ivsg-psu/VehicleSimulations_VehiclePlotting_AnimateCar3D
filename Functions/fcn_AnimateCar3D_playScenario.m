@@ -17,7 +17,7 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %           (TimeStep=seconds), (CameraSettings=settings),...
 %           (CameraFollow=instance), (ShowOptions=flag), (Caption=flag),...
 %           (GifFile=fileName), (GifDelay=seconds), (Terrain=terrain),...
-%           (CameraPitch=flag), (FigNum=figNum))
+%           (CameraPitch=flag), (TimeOfDay=timeOfDay), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -55,6 +55,13 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %               road's surface, so the object's pitch shows against it
 %               (for example, cresting a hill ahead of the camera).
 %      The camera turns about the object in each case.
+%
+%      TimeOfDay: 'day' or 'night'. Default []: the scenario's own
+%      TimeOfDay if it has one, else 'day'. At night: a dark sky and
+%      night lighting (fcn_CarMesh3D_plotScene), the road, buildings, and
+%      ground in night colors with lit windows, and the vehicles' lights
+%      glowing, with pools of light from their headlights and taillights
+%      (fcn_CarMesh3D_plotVehicle's LightEffects, on near vehicles).
 %
 %      Terrain: the ground. 'auto' (default): when the road is not level
 %      (hills or banking), the ground around it from
@@ -101,7 +108,8 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playScenario
-%   % * Added the Terrain option: the ground around roads with hills or banking
+%   % * Added the Terrain option: the ground around roads with hills or banking;
+%   % * CameraPitch; TimeOfDay ('night': night lighting, colors, lit windows, light effects)
 
 % TO-DO:
 %
@@ -128,6 +136,7 @@ arguments
     options.GifDelay = []               % seconds per GIF frame; [] for TimeStep
     options.Terrain = 'auto'            % 'auto', a terrain (fcn_AnimateCar3D_fillTerrain), or [] for flat
     options.CameraPitch = []            % [] (the scenario's, else 'none'), false/'none', true/'vehicle', or 'road'
+    options.TimeOfDay = []              % 'day' or 'night'; [] for the scenario's, else 'day'
     options.FigNum = 1                  % figure to draw in; -1 for fast mode
 end
 
@@ -195,6 +204,9 @@ if 0==flag_max_speed
         if ~isempty(options.GifDelay) && ~(isnumeric(options.GifDelay) && isscalar(options.GifDelay) && options.GifDelay > 0)
             error('GifDelay must be a positive number of seconds, or []');
         end
+        if ~(isempty(options.TimeOfDay) || ((ischar(options.TimeOfDay) || isstring(options.TimeOfDay)) && any(strcmpi(char(options.TimeOfDay), {'day','night'}))))
+            error('TimeOfDay must be ''day'' or ''night'', or []');
+        end
         if ~(isempty(options.CameraPitch) || (islogical(options.CameraPitch) && isscalar(options.CameraPitch)) || any(strcmp(options.CameraPitch, {'none','vehicle','road'})))
             error('CameraPitch must be false, true, ''none'', ''vehicle'', or ''road''');
         end
@@ -223,6 +235,17 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+%%%% Day or night
+timeOfDay = options.TimeOfDay;
+if isempty(timeOfDay)
+    timeOfDay = 'day';
+    if isfield(scenario, 'TimeOfDay') && ~isempty(scenario.TimeOfDay)
+        timeOfDay = scenario.TimeOfDay;
+    end
+end
+timeOfDay = lower(char(timeOfDay));
+flagNight = strcmp(timeOfDay, 'night');
+
 %%%% How the camera tilts
 pitchMode = options.CameraPitch;
 if isempty(pitchMode)
@@ -250,6 +273,9 @@ else
 end
 clf(figureHandle);
 set(figureHandle, 'Color', 'w');
+if flagNight
+    set(figureHandle, 'Color', [0.03 0.04 0.08]);       % (the night sky, also behind the caption)
+end
 pathPoints = cell2mat(cellfun(@(motion) motion.Pose(:,1:2), scenario.Motions(:), 'UniformOutput', false));
 if isfield(scenario, 'CenterlineOptions') && ~isempty(scenario.CenterlineOptions)
     pathPoints = [pathPoints; cell2mat(cellfun(@(option) option.XY, scenario.CenterlineOptions(:), 'UniformOutput', false))];
@@ -262,17 +288,21 @@ if ischar(terrain) && strcmp(terrain, 'auto')
         terrain = fcn_AnimateCar3D_fillTerrain(scenario.Road, FigNum=-1);
     end
 end
-fcn_CarMesh3D_plotScene(GroundExtent=extent, GridSpacing=0, GroundColor=[0.55 0.62 0.48], FigNum=figureHandle.Number);
+groundColor = [0.55 0.62 0.48];
+if flagNight
+    groundColor = 0.40*groundColor;                     % (as dark as the road's night grass, under the night lighting)
+end
+fcn_CarMesh3D_plotScene(GroundExtent=extent, GridSpacing=0, GroundColor=groundColor, TimeOfDay=timeOfDay, FigNum=figureHandle.Number);
 axesHandle = get(figureHandle, 'CurrentAxes');
 set(axesHandle, 'Position', [0 0 1 0.9]);
 zLimits = [-0.5 40];
 if ~isempty(terrain)
     delete(findall(axesHandle, 'Type', 'patch'));      % (the flat ground: the terrain replaces it)
-    fcn_AnimateCar3D_plotTerrain(terrain, AxesHandle=axesHandle, FigNum=-1);
+    fcn_AnimateCar3D_plotTerrain(terrain, TimeOfDay=timeOfDay, AxesHandle=axesHandle, FigNum=-1);
     extent = [terrain.X([1 end]) terrain.Y([1 end])];
     zLimits = [min(terrain.Z(:)) - 1, max(terrain.Z(:)) + 40];
 end
-roadHandles = fcn_AnimateCar3D_plotRoad(scenario.Road, ShowBanks=isempty(terrain), AxesHandle=axesHandle, FigNum=-1);
+roadHandles = fcn_AnimateCar3D_plotRoad(scenario.Road, ShowBanks=isempty(terrain), TimeOfDay=timeOfDay, AxesHandle=axesHandle, FigNum=-1);
 if options.ShowOptions && isfield(scenario, 'CenterlineOptions')
     pathColors = [0.10 0.35 0.85; 0.85 0.33 0.10; 0.49 0.18 0.56; 0.47 0.67 0.19; 0.30 0.75 0.93; 0.64 0.08 0.18];
     for ith_option = 1:numel(scenario.CenterlineOptions)
@@ -342,7 +372,7 @@ for ith_frame = 1:numel(frameTimes)
     end
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, thisTime, criteria, SelectorState=selectorState, ...
         Camera=axesHandle, MeshSet=meshSet);
-    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figureHandle.Number);
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, LightEffects=flagNight, FigNum=figureHandle.Number);
     if options.Caption
         followSpeed = NaN;
         if ~isempty(followIndex)
@@ -437,7 +467,8 @@ end
 caption = findall(figureHandle, 'Tag', 'AnimateCar3D scenario caption');
 if isempty(caption)
     annotation(figureHandle, 'textbox', [0 0.9 1 0.1], 'String', captionLines, 'Tag', 'AnimateCar3D scenario caption', ...
-        'EdgeColor','none', 'HorizontalAlignment','center', 'VerticalAlignment','middle', 'FontSize', 10, 'Interpreter','none');
+        'EdgeColor','none', 'HorizontalAlignment','center', 'VerticalAlignment','middle', 'FontSize', 10, 'Interpreter','none', ...
+        'Color', [1 1 1]*(1 - round(mean(get(figureHandle, 'Color')))));   % (dark text by day, light at night)
 else
     set(caption(1), 'String', captionLines);
 end

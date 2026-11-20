@@ -124,6 +124,19 @@ roadResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false
 roadUp = get(roadResult.Axes, 'CameraUpVector');
 assert(abs(norm(roadUp) - 1) < 1e-9 && roadUp(3) > cos(atan(0.06)) - 1e-6);   % (tilted by a grade within the road's 6%)
 
+%% TEST case: Night: dark sky, night road and ground, light effects on the vehicle
+figNum = 20004;
+titleString = sprintf('TEST case: Night: dark sky, night road and ground, light effects on the vehicle');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+nightScenario = fcn_AnimateCar3D_fillExampleScenario('laneChange', TimeOfDay='night', FigNum=-1);
+nightResult = fcn_AnimateCar3D_playScenario(nightScenario, TimeStep=5, FigNum=figNum);
+assert(max(get(nightResult.Figure, 'Color')) < 0.1 && isgraphics(nightResult.RoadHandles.Marks) && strcmp(nightResult.RoadHandles.Marks.FaceLighting, 'none'));
+assert(~isempty(findall(nightResult.Axes, '-regexp', 'DisplayName', '^Glow')));   % (the vehicle's lights glow)
+dayResult = fcn_AnimateCar3D_playScenario(nightScenario, TimeStep=5, TimeOfDay='day', FigNum=figNum);
+assert(isequal(get(dayResult.Figure, 'Color'), [1 1 1]));
+
 %% Fast Mode Tests
 
 %% Basic fast mode - FAST MODE (draws in the current figure)

@@ -37,7 +37,7 @@ function scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName, options)
 % FORMAT:
 %
 %       scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName,...
-%           (Seed=seed), (FigNum=figNum))
+%           (Seed=seed), (TimeOfDay=timeOfDay), (FigNum=figNum))
 %
 %       exampleList = fcn_AnimateCar3D_fillExampleScenario()
 %
@@ -50,6 +50,11 @@ function scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName, options)
 %
 %      Seed: the scene's random seed (fcn_AnimateCar3D_fillRoad).
 %      Default 1.
+%
+%      TimeOfDay: 'day' (default) or 'night': the night version of the
+%      example (fcn_AnimateCar3D_playScenario plays it at night: a dark
+%      sky, night colors, lit windows, and the vehicles' headlights and
+%      taillights glowing, with pools of light). Every example has one.
 %
 %      FigNum: a figure to draw the scene and the paths from above.
 %      Empty (default) for no figure; -1 for fast mode (no input checks).
@@ -105,6 +110,7 @@ arguments
 
     scenarioName = ''
     options.Seed = 1              % the scene's random seed
+    options.TimeOfDay = 'day'     % 'day' or 'night'
     options.FigNum = []           % figure to draw the scene; -1 for fast mode
 end
 
@@ -158,6 +164,9 @@ if 0==flag_max_speed
 
 
         % Check the scenario name
+        if ~((ischar(options.TimeOfDay) || isstring(options.TimeOfDay)) && any(strcmpi(char(options.TimeOfDay), {'day','night'})))
+            error('TimeOfDay must be ''day'' or ''night''');
+        end
         exampleNames = {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'};
         if ~(ischar(scenarioName) || isstring(scenarioName)) || (~isempty(char(scenarioName)) && ~any(strcmp(char(scenarioName), exampleNames)))
             error('scenarioName must be one of: %s', strjoin(exampleNames, ', '));
@@ -250,13 +259,15 @@ switch scenarioName
         pathS = centerlineOptions{1}.S;
         egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 20, 2.0, 1.5, 2.0, 12), ...
             Instance='ego', Road=road, BodyMotionScale=6, FigNum=-1);
+    otherwise
+        error('Unknown example ''%s''; the examples are: %s', scenarioName, strjoin({'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}, ', '));
 end
 egoMotion = rmfield(egoMotion, {'Speed','Distance'});
 description = exampleList(strcmp({exampleList.Name}, scenarioName)).Description;
 scenario = struct('Name',scenarioName, 'Description',description, 'RoadPreset',roadPreset, 'Seed',options.Seed, ...
     'Road',road, 'CenterlineOptions',{centerlineOptions}, 'SceneList',fcn_AnimateCar3D_loadSceneList(egoRow, FigNum=-1), ...
     'Motions',{{egoMotion}}, 'Duration',egoMotion.Time(end) - egoMotion.Time(1), 'MeshIDs',{{'sample'}}, ...
-    'CameraPitch',fcn_INTERNAL_cameraPitch(scenarioName));
+    'CameraPitch',fcn_INTERNAL_cameraPitch(scenarioName), 'TimeOfDay',lower(char(options.TimeOfDay)));
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

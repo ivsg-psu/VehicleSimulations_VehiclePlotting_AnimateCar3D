@@ -32,6 +32,8 @@
 % - In script_examples_AnimateCar3D
 %   % * Added examples 4 and 5, on hills: the curvy road with hills and
 %   %   banking, and the mountain road
+%   % * Added example 6: example 3 at night (every example has a night
+%   %   version: TimeOfDay='night')
 
 % TO-DO:
 %
@@ -110,3 +112,19 @@ if flag_saveGifs
     gifFile = fullfile(pwd, 'Images', 'example5_mountainRoad.gif');
 end
 fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.5, GifDelay=0.1, GifFile=gifFile, FigNum=5);
+
+
+%% Example 6. At night: example 3 after dark
+% Every example has a night version: fcn_AnimateCar3D_fillExampleScenario
+% with TimeOfDay='night'. The sky is dark, the road and ground are in
+% night colors (the lane marks stay faintly visible), lit windows show on
+% the buildings of the urban and neighborhood scenes, and the vehicle's
+% headlights and taillights glow and cast pools of light: watch the brake
+% lights as it slows for each curve. (fcn_AnimateCar3D_playScenario also
+% takes TimeOfDay='night' directly, for any scenario.)
+scenario = fcn_AnimateCar3D_fillExampleScenario('curvyVaryingSpeed', TimeOfDay='night');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example6_curvyVaryingSpeedNight.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, GifFile=gifFile, FigNum=6);

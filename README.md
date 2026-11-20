@@ -40,6 +40,7 @@ fcn_AnimateCar3D_playScenario(scenario);                          % the whole an
 | 3. `'curvyVaryingSpeed'` | The same path, slowing for each curve (no more than 2 m/s^2 sideways), with brake lights, and speeding up on the straights | `Images/example3_curvyVaryingSpeed.gif` |
 | 4. `'curvyHills'` | The curvy road with hills (up to 6%) and banked curves, at a constant 12 m/s: the vehicle rides on the road's surface, its body leans in the curves, and the ground is drawn around the road | `Images/example4_curvyHills.gif` |
 | 5. `'mountainRoad'` | About 2 km of winding mountain road with hairpins, up to a summit and down (up to 12%, easing on tight curves), slowing for each curve; the body's pitch and roll exaggerated 6 times; the camera tilts with the road | `Images/example5_mountainRoad.gif` |
+| 6. `'curvyVaryingSpeed'` at night | Example 3 after dark (`TimeOfDay='night'`; every example has a night version): night sky and colors, faint lane marks, lit windows in town, and the vehicle's headlights and taillights glowing, with pools of light (the brake lights show as it slows for each curve) | `Images/example6_curvyVaryingSpeedNight.gif` |
 
 ![Example 1](Images/example1_laneChange.gif) ![Example 3](Images/example3_curvyVaryingSpeed.gif) ![Example 5](Images/example5_mountainRoad.gif)
 
@@ -452,6 +453,19 @@ Roads can rise and fall and be banked, as in OpenDRIVE (`<elevationProfile>` and
 - **Banking** (`CrossSlope='banked'`): down to the inside of each curve, in proportion to its curvature, `MaxCrossSlope` (6%) at the tightest.
 - **The mountain road** (`Preset='mountain'`): about 2 km of winding road (bends of 30 to 120 m radius, about one in six a hairpin of 18 to 25 m, in switchback pairs), never closer than 30 m to itself, mountain heights and banking by default, at random from `Seed`.
 - **The ground** (`fcn_AnimateCar3D_fillTerrain`): held just under the road and smooth everywhere else. For the mountain road, a mountain (`Shape='mountain'`): its peak rises `PeakHeight` (250 m) above the road's summit, beside it, and the road is cut and filled into its side. Grass with gentle shading, block trees kept clear of the road (see-through on the near side), the full grid within `NearDistance` (60 m) of the road and a coarse one farther out (about 4 times fewer faces). `fcn_AnimateCar3D_plotRoad`'s `ShowBanks` draws simple grassy banks instead, for a road without the ground.
+
+### Night
+
+Every scene has a night version, with `TimeOfDay='night'` in `fcn_AnimateCar3D_playScenario` (or in `fcn_AnimateCar3D_fillExampleScenario`, for the examples), or in `fcn_AnimateCar3D_plotRoad` and `fcn_AnimateCar3D_plotTerrain` when drawing a scene yourself:
+
+![Day and night](Images/dayNight_allScenes.png)
+
+- A dark sky and dim, bluish night lighting (CarMesh3D's `fcn_CarMesh3D_plotScene` with `TimeOfDay='night'`).
+- The road, buildings, trees, and ground in darker colors; the lane marks drawn unshaded, so they stay faintly visible (as reflective paint does).
+- Lit windows (about a third, warm, unshaded) on the opaque buildings of the urban and neighborhood scenes, chosen at random but the same every time for a road.
+- The vehicles' lights glowing, with pools of light on the road from their headlights, taillights, and brake lights (CarMesh3D's `LightEffects`, on the nearest vehicles).
+
+Street lights are not drawn yet.
 
 ### Centerline options (for path-following and decision-making tests)
 

@@ -205,6 +205,26 @@ assert(numel(handles.SeeThrough)==2 && isequal(sort([handles.SeeThrough.FaceAlph
 handles = fcn_AnimateCar3D_plotRoad(urbanRoad, NearSideAlpha=1, FigNum=figNum);
 assert(isempty(handles.SeeThrough));
 
+%% TEST case: Night: darker, unshaded marks, lit windows (the same each time)
+figNum = 20012;
+titleString = sprintf('TEST case: Night: darker, unshaded marks, lit windows (the same each time)');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+urbanRoad = fcn_AnimateCar3D_fillRoad(Preset='urbanStreet', FigNum=-1);
+dayHandles = fcn_AnimateCar3D_plotRoad(urbanRoad, FigNum=figNum);
+assert(isempty(dayHandles.Windows));
+dayColors = dayHandles.Surface.FaceVertexCData;
+clf;
+nightHandles = fcn_AnimateCar3D_plotRoad(urbanRoad, TimeOfDay='night', FigNum=figNum);
+assert(isgraphics(nightHandles.Windows, 'patch') && strcmp(nightHandles.Windows.FaceLighting, 'none') && strcmp(nightHandles.Marks.FaceLighting, 'none'));
+assert(max(nightHandles.Surface.FaceVertexCData(:)) < 0.6*max(dayColors(:)));
+assert(size(nightHandles.Windows.Faces,1) > 50 && all(nightHandles.Windows.Vertices(:,2) > 0));   % (windows: far side only, opaque buildings)
+nightWindows = nightHandles.Windows.Vertices;
+clf;
+again = fcn_AnimateCar3D_plotRoad(urbanRoad, TimeOfDay='night', FigNum=figNum);
+assert(isequal(again.Windows.Vertices, nightWindows));
+
 %% Fast Mode Tests
 
 %% Basic example - NO FIGURE NUMBER (the current axes)

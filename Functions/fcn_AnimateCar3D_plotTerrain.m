@@ -13,7 +13,7 @@ function handles = fcn_AnimateCar3D_plotTerrain(terrain, options)
 %
 %       handles = fcn_AnimateCar3D_plotTerrain(terrain, (GrassColor=rgb),...
 %           (NearSideAlpha=alpha), (NearDistance=meters), (CoarseStep=n),...
-%           (AxesHandle=axesHandle), (FigNum=figNum))
+%           (TimeOfDay=timeOfDay), (AxesHandle=axesHandle), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -21,7 +21,11 @@ function handles = fcn_AnimateCar3D_plotTerrain(terrain, options)
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
-%      GrassColor: [r g b]. Default [0.42 0.55 0.32] (the road's grass).
+%      GrassColor: [r g b]. Default [] (the road's grass, [0.42 0.55
+%      0.32]; at night, darker).
+%
+%      TimeOfDay: 'day' (default) or 'night' (the grass and trees darker,
+%      as fcn_AnimateCar3D_plotRoad's night colors).
 %
 %      NearSideAlpha: the opacity of near-side trees. Default 0.3.
 %
@@ -64,7 +68,8 @@ function handles = fcn_AnimateCar3D_plotTerrain(terrain, options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_plotTerrain
-%   % * Full grid near the road, coarse farther out (NearDistance, CoarseStep)
+%   % * Full grid near the road, coarse farther out (NearDistance, CoarseStep);
+%   % * TimeOfDay ('night': darker grass and trees)
 
 % TO-DO:
 %
@@ -82,7 +87,8 @@ function handles = fcn_AnimateCar3D_plotTerrain(terrain, options)
 arguments
 
     terrain
-    options.GrassColor = [0.42 0.55 0.32]   % [r g b]
+    options.GrassColor = []                  % [r g b]; [] for the road's grass (darker at night)
+    options.TimeOfDay = 'day'                % 'day' or 'night'
     options.NearSideAlpha = 0.3              % opacity of near-side trees
     options.NearDistance = 60                % meters: full grid within this of the road
     options.CoarseStep = 4                   % grid points per coarse cell, farther out
@@ -143,7 +149,10 @@ if 0==flag_max_speed
         if ~(isstruct(terrain) && all(isfield(terrain, {'X','Y','Z','Distance','Shade','Trees'})))
             error('terrain must come from fcn_AnimateCar3D_fillTerrain');
         end
-        if ~(isnumeric(options.GrassColor) && numel(options.GrassColor)==3)
+        if ~((ischar(options.TimeOfDay) || isstring(options.TimeOfDay)) && any(strcmpi(char(options.TimeOfDay), {'day','night'})))
+            error('TimeOfDay must be ''day'' or ''night''');
+        end
+        if ~isempty(options.GrassColor) && ~(isnumeric(options.GrassColor) && numel(options.GrassColor)==3)
             error('GrassColor must be [r g b]');
         end
         if ~(isnumeric(options.NearDistance) && isscalar(options.NearDistance) && options.NearDistance >= 0)
@@ -248,14 +257,23 @@ shades = [shades; seamShade(:)];
 allVertices = [gridX(:) gridY(:) terrain.Z(:); gridX(:) gridY(:) terrain.Z(:) - 0.5];
 [usedPoints, ~, newIndex] = unique(faces(:));
 faces = reshape(newIndex, size(faces));
-grassColors = min(shades.*options.GrassColor(:)', 1);
+flagNight = strcmpi(char(options.TimeOfDay), 'night');
+nightFactor = 1;
+if flagNight
+    nightFactor = 0.55;
+end
+grassColor = options.GrassColor;
+if isempty(grassColor)
+    grassColor = nightFactor*[0.42 0.55 0.32];
+end
+grassColors = min(shades.*grassColor(:)', 1);
 handles = struct('Ground',[], 'Trees',[], 'SeeThrough',[], 'Axes',axesHandle, 'NumFaces',size(faces,1), 'NumGroundFaces',size(faces,1));
 handles.Ground = patch('Vertices',allVertices(usedPoints,:), 'Faces',faces, 'FaceVertexCData',grassColors, ...
     patchStyle{:}, 'Tag','AnimateCar3D terrain');
 
 %%%% Trees: trunk and canopy boxes; near-side ones see-through
-trunkColor = [0.40 0.28 0.18];
-canopyColor = [0.24 0.46 0.20];
+trunkColor = nightFactor*[0.40 0.28 0.18];
+canopyColor = nightFactor*[0.24 0.46 0.20];
 for flagNear = [false true]
     if isempty(terrain.Trees)
         break;

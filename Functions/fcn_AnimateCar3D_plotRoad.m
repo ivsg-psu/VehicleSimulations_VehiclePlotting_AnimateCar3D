@@ -19,7 +19,7 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 %
 %       handles = fcn_AnimateCar3D_plotRoad(road, (SampleSpacing=meters),...
 %           (ShowObjects=flag), (ShowBanks=flag), (BuildingAlpha=alpha),...
-%           (NearSideAlpha=alpha), (Colors=colors),...
+%           (NearSideAlpha=alpha), (Colors=colors), (TimeOfDay=timeOfDay),...
 %           (AxesHandle=axesHandle), (FigNum=figNum))
 %
 % INPUTS:
@@ -48,6 +48,13 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 %      0.3; 1 for solid. A building is drawn at the lower of
 %      BuildingAlpha and NearSideAlpha.
 %
+%      TimeOfDay: 'day' (default) or 'night'. At night every surface and
+%      object is darker (for fcn_CarMesh3D_plotScene's night lighting),
+%      the road marks are drawn unshaded, so they stay faintly visible (as
+%      retroreflective paint), and about a third of the windows of the
+%      opaque buildings are lit (drawn unshaded, warm: the Windows
+%      patch), chosen at random but the same every time for a road.
+%
 %      Colors: a structure of colors to change ([r g b], 0 to 1), by
 %      name: lane types (driving, shoulder, border, median, curb,
 %      walking, other), mark colors (white, yellow), and objects
@@ -66,7 +73,8 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 %      handles: Surface, Marks, Objects (patch handles; Objects is empty
 %      if there are none), SeeThrough (the see-through buildings and
 %      trees: one patch for each opacity; empty if none), Axes, and
-%      NumFaces (faces drawn in all).
+%      NumFaces (faces drawn in all); at night, Windows (the lit
+%      windows' patch; empty by day or if none).
 %
 % DEPENDENCIES:
 %
@@ -89,12 +97,16 @@ function handles = fcn_AnimateCar3D_plotRoad(road, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_plotRoad
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_plotRoad
+%   % * Added TimeOfDay ('night': darker colors, unshaded marks, lit windows)
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_plotRoad
-%   % * Junction surfaces and stop lines (with intersections); elevation
+%   % * Street lights and their pools at night
 
 
 
@@ -112,6 +124,7 @@ arguments
     options.BuildingAlpha = 1      % buildings' opacity (below 1: see-through)
     options.NearSideAlpha = 0.3    % opacity of near-side (right) buildings and trees
     options.Colors = []            % colors to change, by name
+    options.TimeOfDay = 'day'      % 'day' or 'night' (darker; marks unshaded; lit windows)
     options.AxesHandle = []        % axes to draw in
     options.FigNum = []            % figure to draw in; -1 for fast mode
 end
@@ -173,6 +186,9 @@ if 0==flag_max_speed
         end
 
         % Check the options
+        if ~((ischar(options.TimeOfDay) || isstring(options.TimeOfDay)) && any(strcmpi(char(options.TimeOfDay), {'day','night'})))
+            error('TimeOfDay must be ''day'' or ''night''');
+        end
         if ~(isnumeric(options.SampleSpacing) && isscalar(options.SampleSpacing) && options.SampleSpacing > 0)
             error('SampleSpacing must be a positive number of meters');
         end
@@ -225,6 +241,8 @@ end
 surface = fcn_INTERNAL_emptyMesh;
 marks = fcn_INTERNAL_emptyMesh;
 objects = fcn_INTERNAL_emptyMesh;
+windows = fcn_INTERNAL_emptyMesh;                       % (lit windows, at night)
+flagNight = strcmpi(char(options.TimeOfDay), 'night');
 buildingAlphas = [];                        % one see-through patch per opacity
 buildingMeshes = {};
 for ith_road = 1:numel(roads)
@@ -291,6 +309,9 @@ for ith_road = 1:numel(roads)
             end
             if objectAlpha >= 1
                 objects = fcn_INTERNAL_addObject(objects, road, thisObject, spacing, colors);
+                if flagNight && strcmp(thisObject.Type, 'building')
+                    windows = fcn_INTERNAL_addWindows(windows, road, thisObject);
+                end
             else
                 meshIndex = find(buildingAlphas==objectAlpha, 1);
                 if isempty(meshIndex)
@@ -310,6 +331,17 @@ for ith_junction = 1:numel(junctions)
     surface = fcn_INTERNAL_addJunction(surface, junctions(ith_junction), colors);
 end
 
+%%%% Night: everything darker (the night lighting darkens it further);
+%%%% the marks a little dimmer, but drawn unshaded so they stay visible
+if flagNight
+    surface.Colors = fcn_INTERNAL_nightColor(surface.Colors);
+    objects.Colors = fcn_INTERNAL_nightColor(objects.Colors);
+    for ith_mesh = 1:numel(buildingMeshes)
+        buildingMeshes{ith_mesh}.Colors = fcn_INTERNAL_nightColor(buildingMeshes{ith_mesh}.Colors);
+    end
+    marks.Colors = 0.45*marks.Colors;
+end
+
 %%%% Draw: three patches
 if isequal(options.FigNum, -1) || isempty(options.FigNum)
     axesHandle = options.AxesHandle;
@@ -327,11 +359,20 @@ flagNewAxes = isempty(get(axesHandle, 'Children'));
 hold(axesHandle, 'on');
 patchStyle = {'EdgeColor','none', 'FaceColor','flat', 'FaceLighting','flat', 'AmbientStrength',0.6, ...
     'DiffuseStrength',0.5, 'SpecularStrength',0, 'Parent',axesHandle};
-handles = struct('Surface',[], 'Marks',[], 'Objects',[], 'SeeThrough',[], 'Axes',axesHandle, 'NumFaces',0);
+handles = struct('Surface',[], 'Marks',[], 'Objects',[], 'SeeThrough',[], 'Windows',[], 'Axes',axesHandle, 'NumFaces',0);
 handles.Surface = patch('Vertices',surface.Vertices, 'Faces',surface.Faces, 'FaceVertexCData',surface.Colors, ...
     patchStyle{:}, 'Tag','AnimateCar3D road surface');
 handles.Marks = patch('Vertices',marks.Vertices, 'Faces',marks.Faces, 'FaceVertexCData',marks.Colors, ...
     patchStyle{:}, 'Tag','AnimateCar3D road marks');
+handles.Windows = [];
+if flagNight
+    set(handles.Marks, 'FaceLighting', 'none');
+    if ~isempty(windows.Faces)
+        handles.Windows = patch('Vertices',windows.Vertices, 'Faces',windows.Faces, 'FaceVertexCData',windows.Colors, ...
+            patchStyle{:}, 'FaceLighting','none', 'Tag','AnimateCar3D road windows');
+        handles.NumFaces = handles.NumFaces + size(windows.Faces,1);
+    end
+end
 if ~isempty(objects.Faces)
     handles.Objects = patch('Vertices',objects.Vertices, 'Faces',objects.Faces, 'FaceVertexCData',objects.Colors, ...
         patchStyle{:}, 'Tag','AnimateCar3D road objects');
@@ -387,6 +428,55 @@ end % Ends main function
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% fcn_INTERNAL_nightColor
+function colors = fcn_INTERNAL_nightColor(colors)
+% Night colors: darker, a little toward blue
+colors = 0.55*colors + [0 0 0.02];
+end % Ends fcn_INTERNAL_nightColor
+
+%% fcn_INTERNAL_addWindows
+function mesh = fcn_INTERNAL_addWindows(mesh, road, object)
+% Lit windows on a building's four walls: a grid (floors 3.5 m apart,
+% columns 3 m apart), each window 1.4 m wide and 1.5 m tall, about a third
+% lit, chosen from the building's place (the same every time), set 5 cm
+% out from the wall
+[place, ~, placeZ] = fcn_AnimateCar3D_getRoadPoints(road, object.S, T=object.T, FigNum=-1);
+zBase = placeZ + object.ZOffset + fcn_INTERNAL_heightAt(road, object.S, object.T);
+heading = place(3) + object.Hdg;
+along = [cos(heading) sin(heading)];
+across = [-sin(heading) cos(heading)];
+randomStream = RandStream('mt19937ar', 'Seed', mod(round(1000*object.S + 7*object.T), 2^31));
+floorBottoms = 1.0:3.5:(object.Height - 2.0);
+warmColors = [1.00 0.86 0.55; 0.98 0.92 0.72; 0.90 0.80 0.60];
+% (each wall: its center offset, its outward direction, and its width)
+walls = {across*(object.Width/2 + 0.05), across, along, object.Length; ...
+         -across*(object.Width/2 + 0.05), -across, along, object.Length; ...
+         along*(object.Length/2 + 0.05), along, across, object.Width; ...
+         -along*(object.Length/2 + 0.05), -along, across, object.Width};
+for ith_wall = 1:size(walls,1)
+    wallCenter = place(1:2) + walls{ith_wall,1};
+    sideways = walls{ith_wall,3};
+    wallWidth = walls{ith_wall,4};
+    Ncolumns = floor((wallWidth - 1)/3);
+    if Ncolumns < 1 || isempty(floorBottoms)
+        continue;
+    end
+    columnCenters = ((1:Ncolumns) - (Ncolumns + 1)/2)*3;
+    [columnGrid, floorGrid] = meshgrid(columnCenters, floorBottoms);
+    lit = randomStream.rand(size(columnGrid)) < 0.35;
+    for ith_window = reshape(find(lit), 1, [])
+        middle = wallCenter + columnGrid(ith_window)*sideways;
+        corners = [middle - 0.7*sideways; middle + 0.7*sideways];
+        zLow = zBase + floorGrid(ith_window);
+        vertices = [corners(1,:) zLow; corners(2,:) zLow; corners(2,:) zLow + 1.5; corners(1,:) zLow + 1.5];
+        base = size(mesh.Vertices,1);
+        mesh.Vertices = [mesh.Vertices; vertices];
+        mesh.Faces = fcn_INTERNAL_joinFaces(mesh.Faces, base + [1 2 3 4]);
+        mesh.Colors = [mesh.Colors; warmColors(randomStream.randi(3),:)];
+    end
+end
+end % Ends fcn_INTERNAL_addWindows
 
 %% fcn_INTERNAL_colors
 function colors = fcn_INTERNAL_colors(userColors)

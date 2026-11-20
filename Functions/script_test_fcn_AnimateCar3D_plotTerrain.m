@@ -92,6 +92,8 @@ figure(figNum); close(figNum);
 
 handles = fcn_AnimateCar3D_plotTerrain(terrain, GrassColor=[0.3 0.4 0.25], NearSideAlpha=1, FigNum=figNum);
 assert(max(handles.Ground.FaceVertexCData(:,1)) <= 0.3*1.03 + 1e-9 && handles.SeeThrough.FaceAlpha==1);
+nightHandles = fcn_AnimateCar3D_plotTerrain(terrain, TimeOfDay='night', FigNum=figNum);
+assert(max(nightHandles.Ground.FaceVertexCData(:,2)) <= 0.55*0.55*1.03 + 1e-9);
 
 %% Fast Mode Tests
 

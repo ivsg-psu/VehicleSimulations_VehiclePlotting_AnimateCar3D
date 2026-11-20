@@ -125,6 +125,8 @@ mountain = fcn_AnimateCar3D_fillExampleScenario('mountainRoad');
 motion = mountain.Motions{1};
 assert(strcmp(mountain.RoadPreset,'mountain') && size(motion.Pose,2)==6 && max(motion.Pose(:,3)) > 50);
 assert(strcmp(mountain.CameraPitch,'road') && strcmp(hills.CameraPitch,'none'));
+nightLane = fcn_AnimateCar3D_fillExampleScenario('laneChange', TimeOfDay='night');
+assert(strcmp(nightLane.TimeOfDay,'night') && strcmp(hills.TimeOfDay,'day'));
 assert(max(abs(motion.BodyRoll)) > 6*deg2rad(4)*1.5/9.81 && max(motion.BodyPitch) > 0 && min(motion.BodyPitch) < 0);   % (exaggerated body motion)
 speeds = hypot(diff(motion.Pose(:,1)), diff(motion.Pose(:,2)))./diff(motion.Time);
 assert(min(speeds) < 8 && max(speeds) > 15);                             % (slow in hairpins)
