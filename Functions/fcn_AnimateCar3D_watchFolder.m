@@ -33,10 +33,27 @@ function [update, watchState] = fcn_AnimateCar3D_watchFolder(folder, options)
 %   displayCriteria.txt (optional) changes to the display criteria (see
 %                      fcn_AnimateCar3D_changeDisplayCriteria).
 %
-% A file being written may end partway through a row. A file whose last
-% character is not a line end is left until a later call, when it is
-% complete. A file that cannot be read yet is reported in Skipped and
-% tried again on the next check.
+% READING ONLY WHAT IS NEW: a motion or traffic file that has grown by
+% rows added at its end is not read again whole: only the new rows are
+% read (with the last row read before, so units, yaw, and at least 2
+% rows carry over), and they are joined to the motions already read. A
+% file being written may end partway through a row: the complete rows
+% are read, and the rest is read at a later call, once complete.
+%
+% DELETED AND REPLACED FILES: a deleted file removes its objects (unless
+% another file now holds them). A file is taken as REPLACED, and read
+% again whole, if it is shorter than what was read, if its first bytes
+% (the header and first rows) or the last row read have changed, if it
+% has the same size but a new date, or if its new rows go back in time;
+% objects no longer in it are removed. (An edit in the middle of a file
+% that keeps both its first bytes and the last row read is not seen: to
+% change a file, write a new one, under a name starting with "_", and
+% rename it.) The scene list and the criteria file are always read whole,
+% once their last row is complete. A file that cannot be read yet is
+% reported in Skipped and tried again on the next check.
+%
+% The watcher keeps each object's motion read so far (in watchState), so
+% memory grows with the data, as the catalog's does.
 %
 % FORMAT:
 %
@@ -87,6 +104,9 @@ function [update, watchState] = fcn_AnimateCar3D_watchFolder(folder, options)
 %           LatestTime: the latest scene time in all the live data (the
 %               newest data the animation can show); -Inf if none
 %           AddedFiles, ChangedFiles, DeletedFiles: file names
+%           AppendedFiles: changed files of which only new rows were read
+%           ReplacedFiles: changed files read again whole (see above)
+%           BytesRead: the bytes read from motion and traffic files
 %           Skipped: files not read in this check, with the reason
 %               (structure array with fields File and Reason)
 %           NumInstances: the objects now in the folder
@@ -125,6 +145,12 @@ function [update, watchState] = fcn_AnimateCar3D_watchFolder(folder, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_watchFolder
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_watchFolder
+%   % * Reads only the new rows of a grown file; finds replaced files
+%   %   (read again whole) and deleted ones; reads the complete rows of a
+%   %   file whose last row is not complete
 
 % TO-DO:
 %
@@ -248,7 +274,7 @@ folder = char(folder);
 watchState = options.WatchState;
 update = struct('Checked',false, 'Add',[], 'Motions',[], 'Remove',{cell(1,0)}, 'CriteriaFile','', ...
     'LatestTime',-Inf, 'AddedFiles',{cell(1,0)}, 'ChangedFiles',{cell(1,0)}, 'DeletedFiles',{cell(1,0)}, ...
-    'Skipped',struct('File',{}, 'Reason',{}), 'NumInstances',0, 'CheckSeconds',0);
+    'AppendedFiles',{cell(1,0)}, 'ReplacedFiles',{cell(1,0)}, 'BytesRead',0, 'Skipped',struct('File',{}, 'Reason',{}), 'NumInstances',0, 'CheckSeconds',0);
 
 % The first call: an empty memory
 if isempty(watchState)
@@ -258,6 +284,8 @@ if isempty(watchState)
     watchState.FileInstances = containers.Map('KeyType','char','ValueType','any');
     watchState.BaseRows = containers.Map('KeyType','char','ValueType','any');
     watchState.EndTimes = containers.Map('KeyType','char','ValueType','double');   % before time offsets
+    watchState.Motions = containers.Map('KeyType','char','ValueType','any');       % each object's motion read so far
+    watchState.FileRecords = containers.Map('KeyType','char','ValueType','any');   % how far each file was read
     watchState.LatestTime = -Inf;
     watchState.SceneRows = [];
     watchState.LastCheck = [];
@@ -297,11 +325,15 @@ update.ChangedFiles = currentNames(flagChanged);
 update.DeletedFiles = deletedNames;
 toRead = find(flagAdded | flagChanged);
 
-% Files to read must be complete (end with a line end)
+% The scene list and the criteria file are read whole, so they must be
+% complete (end with a line end); motion files are read up to their last
+% complete row
+sceneListRow = find(strcmpi(currentNames, options.SceneListName));
+criteriaRow = find(strcmpi(currentNames, options.CriteriaName));
 flagComplete = true(size(toRead));
 for ith_read = 1:numel(toRead)
     fileName = currentNames{toRead(ith_read)};
-    if ~fcn_INTERNAL_isComplete(fullfile(folder, fileName))
+    if ismember(toRead(ith_read), [sceneListRow criteriaRow]) && ~fcn_INTERNAL_isComplete(fullfile(folder, fileName))
         flagComplete(ith_read) = false;
         update.Skipped(end+1) = struct('File',fileName, 'Reason','the last row is not complete yet');
     end
@@ -311,7 +343,6 @@ flagRead = false(size(currentNames));   % read successfully in this check
 
 %%%% 2. The scene list
 flagSceneListChanged = false;
-sceneListRow = find(strcmpi(currentNames, options.SceneListName));
 for ith_read = toRead(ismember(toRead, sceneListRow))
     try
         watchState.SceneRows = fcn_AnimateCar3D_loadSceneList(fullfile(folder, currentNames{ith_read}), FigNum=-1);
@@ -328,7 +359,6 @@ end
 [listedNames, listedFiles] = fcn_INTERNAL_listedNames(watchState.SceneRows);
 
 %%%% 3. The display criteria file
-criteriaRow = find(strcmpi(currentNames, options.CriteriaName));
 for ith_read = toRead(ismember(toRead, criteriaRow))
     update.CriteriaFile = fullfile(folder, currentNames{ith_read});
     flagRead(ith_read) = true;
@@ -340,69 +370,114 @@ defaultRow = fcn_AnimateCar3D_loadSceneList(struct('instance','default', 'role',
 addRows = repmat(defaultRow, 0, 1);
 addMotions = repmat(fcn_INTERNAL_emptyMotion(''), 0, 1);
 motionRows = toRead(~ismember(toRead, [sceneListRow criteriaRow]));
+removeCandidates = {};
 for ith_read = motionRows
     fileName = currentNames{ith_read};
     filePath = fullfile(folder, fileName);
     [~, fileStem] = fileparts(fileName);
+    fileBytes = listing(ith_read).bytes;
+    flagKnown = isKey(watchState.FileRecords, fileName);
     try
-        if fcn_INTERNAL_isTrafficFile(filePath)
-            [fileRows, fileMotions] = fcn_AnimateCar3D_loadTrafficFile(filePath, MeshID=char(options.DefaultMeshID), ...
-                Role=char(options.DefaultRole), InstancePrefix=[fileStem '_'], FigNum=-1);
-            baseRows = fileRows;
-            motionsRead = repmat(fcn_INTERNAL_emptyMotion(''), numel(fileMotions), 1);
-            for ith_motion = 1:numel(fileMotions)
-                motionsRead(ith_motion) = fcn_INTERNAL_normalizeMotion(fileMotions(ith_motion), fileMotions(ith_motion).Instance);
+        % Only the new rows, if the file has grown by rows added at its end
+        readKind = 'full';
+        if flagKnown
+            record = watchState.FileRecords(fileName);
+            if fcn_INTERNAL_isAppended(filePath, record, fileBytes, watchState.Files(previousRow(ith_read)).Date, listing(ith_read).datenum)
+                [chunkText, newRecord, numBytes] = fcn_INTERNAL_readAppended(filePath, record, fileBytes);
+                readKind = 'append';
+                if isempty(chunkText)
+                    readKind = 'none';
+                else
+                    try
+                        [motionsRead, baseRows] = fcn_INTERNAL_loadChunk(chunkText, newRecord.IsTraffic, fileName, fileStem, ...
+                            listedNames, listedFiles, defaultRow, options);
+                        [motionsRead, flagJoined] = fcn_INTERNAL_joinMotions(motionsRead, watchState.Motions);
+                        if ~flagJoined
+                            readKind = 'full';     % (new rows went back in time, or other columns)
+                        end
+                    catch
+                        readKind = 'full';
+                    end
+                end
             end
-        else
-            fileIndex = find(strcmpi(listedFiles, fileName), 1);
-            if isempty(fileIndex)
-                instanceName = fileStem;
+        end
+        if strcmp(readKind,'full')
+            [chunkText, newRecord, numBytes] = fcn_INTERNAL_readWhole(filePath, fileBytes);
+            if isempty(chunkText)
+                readKind = 'none';
             else
-                instanceName = listedNames{fileIndex};
+                [motionsRead, baseRows] = fcn_INTERNAL_loadChunk(chunkText, newRecord.IsTraffic, fileName, fileStem, ...
+                    listedNames, listedFiles, defaultRow, options);
             end
-            readMotion = fcn_CarMesh3D_loadMotionCSV(filePath, FigNum=-1);
-            motionsRead = fcn_INTERNAL_normalizeMotion(readMotion, instanceName);
-            baseRows = defaultRow;
-            baseRows.Instance = instanceName;
         end
     catch ME
         update.Skipped(end+1) = struct('File',fileName, 'Reason',ME.message);
         continue;
     end
+    if strcmp(readKind,'none')
+        update.Skipped(end+1) = struct('File',fileName, 'Reason','no complete new row yet');
+        continue;
+    end
+    if newRecord.Offset < fileBytes
+        update.Skipped(end+1) = struct('File',fileName, 'Reason','the last row is not complete yet (the rows before it were read)');
+    end
     flagRead(ith_read) = true;
+    update.BytesRead = update.BytesRead + numBytes;
+    watchState.FileRecords(fileName) = newRecord;
+    if strcmp(readKind,'append')
+        update.AppendedFiles{end+1} = fileName;
+    elseif flagKnown
+        update.ReplacedFiles{end+1} = fileName;
+    end
 
-    % Objects that were in this file before but are not now
+    % The objects in this file: a whole read gives them all (objects that
+    % were in it before but are not now are removed); new rows add to them
     instancesNow = {motionsRead.Instance};
     if isKey(watchState.FileInstances, fileName)
-        update.Remove = [update.Remove, setdiff(watchState.FileInstances(fileName), instancesNow)];
+        instancesBefore = watchState.FileInstances(fileName);
+        if strcmp(readKind,'full')
+            removeCandidates = [removeCandidates, setdiff(instancesBefore, instancesNow)]; %#ok<AGROW>
+        else
+            instancesNow = [instancesBefore, setdiff(instancesNow, instancesBefore, 'stable')];
+        end
     end
     watchState.FileInstances(fileName) = instancesNow;
     for ith_motion = 1:numel(motionsRead)
-        thisName = instancesNow{ith_motion};
-        watchState.BaseRows(thisName) = baseRows(ith_motion);
+        thisName = motionsRead(ith_motion).Instance;
+        if strcmp(readKind,'full') || ~isKey(watchState.BaseRows, thisName)
+            watchState.BaseRows(thisName) = baseRows(ith_motion);
+        end
         thisRow = fcn_INTERNAL_rowFor(thisName, watchState);
         addRows(end+1,1) = thisRow; %#ok<AGROW>
         addMotions(end+1,1) = motionsRead(ith_motion); %#ok<AGROW>
+        watchState.Motions(thisName) = motionsRead(ith_motion);
         watchState.EndTimes(thisName) = motionsRead(ith_motion).Time(end);
     end
 end
 
-%%%% 5. Deleted motion files
+%%%% 5. Deleted motion files; objects no file holds any more are removed
 for ith_deleted = 1:numel(deletedNames)
     if isKey(watchState.FileInstances, deletedNames{ith_deleted})
-        goneNames = watchState.FileInstances(deletedNames{ith_deleted});
-        update.Remove = [update.Remove, goneNames];
+        removeCandidates = [removeCandidates, watchState.FileInstances(deletedNames{ith_deleted})]; %#ok<AGROW>
         remove(watchState.FileInstances, deletedNames{ith_deleted});
     end
+    if isKey(watchState.FileRecords, deletedNames{ith_deleted})
+        remove(watchState.FileRecords, deletedNames{ith_deleted});
+    end
 end
-update.Remove = unique(update.Remove, 'stable');
+heldNames = watchState.FileInstances.values;
+heldNames = [heldNames{:}];
+update.Remove = setdiff(unique(removeCandidates, 'stable'), heldNames, 'stable');
 for ith_gone = 1:numel(update.Remove)
-    if isKey(watchState.EndTimes, update.Remove{ith_gone})
-        remove(watchState.EndTimes, update.Remove{ith_gone});
+    for mapName = {'EndTimes','BaseRows','Motions'}
+        if isKey(watchState.(mapName{1}), update.Remove{ith_gone})
+            remove(watchState.(mapName{1}), update.Remove{ith_gone});
+        end
     end
-    if isKey(watchState.BaseRows, update.Remove{ith_gone})
-        remove(watchState.BaseRows, update.Remove{ith_gone});
-    end
+end
+% (an object removed and added in the same check is only added)
+if ~isempty(update.Remove) && ~isempty(addRows)
+    update.Remove = setdiff(update.Remove, {addRows.Instance}, 'stable');
 end
 
 %%%% 6. A changed scene list changes the rows of every object already here
@@ -499,19 +574,211 @@ lastCharacter = fread(fileID, 1, 'uint8=>double');
 flagComplete = ~isempty(lastCharacter) && (lastCharacter==10 || lastCharacter==13);
 end % Ends fcn_INTERNAL_isComplete
 
-%% fcn_INTERNAL_isTrafficFile
-function flagTraffic = fcn_INTERNAL_isTrafficFile(filePath)
-% True if the header row has an id column (the long traffic format)
-fileID = fopen(filePath, 'r');
-headerLine = fgetl(fileID);
-fclose(fileID);
-if ~ischar(headerLine)
-    flagTraffic = false;
+%% fcn_INTERNAL_readBytes
+function bytes = fcn_INTERNAL_readBytes(filePath, startByte, numBytes)
+% numBytes bytes of a file, from byte startByte (0 for the first)
+bytes = zeros(1,0,'uint8');
+if numBytes <= 0
     return;
 end
+fileID = fopen(filePath, 'r');
+if fileID < 0
+    error('The file could not be opened');
+end
+cleanup = onCleanup(@() fclose(fileID));
+fseek(fileID, startByte, 'bof');
+bytes = fread(fileID, numBytes, 'uint8=>uint8')';
+end % Ends fcn_INTERNAL_readBytes
+
+%% fcn_INTERNAL_isAppended
+function flagAppended = fcn_INTERNAL_isAppended(filePath, record, fileBytes, previousDate, fileDate)
+% True if the file is what was read before, with rows added at its end:
+% no shorter, the same first bytes, the same last row read, and (if it
+% has the same size) the same date
+flagAppended = false;
+if fileBytes < record.Offset || (fileBytes == record.Offset && fileDate ~= previousDate)
+    return;
+end
+if ~isequal(fcn_INTERNAL_readBytes(filePath, 0, numel(record.Head)), record.Head)
+    return;
+end
+tailStart = record.Offset - numel(record.TailLine);
+flagAppended = isequal(fcn_INTERNAL_readBytes(filePath, tailStart, numel(record.TailLine)), record.TailLine);
+end % Ends fcn_INTERNAL_isAppended
+
+%% fcn_INTERNAL_readWhole
+function [chunkText, record, numBytes] = fcn_INTERNAL_readWhole(filePath, fileBytes)
+% The file up to its last complete row, and a record of what was read
+bytes = fcn_INTERNAL_readBytes(filePath, 0, fileBytes);
+lineEnds = find(bytes==10);
+chunkText = '';
+record = [];
+numBytes = 0;
+if numel(lineEnds) < 2                    % (a header and at least one row)
+    return;
+end
+numBytes = lineEnds(end);
+bytes = bytes(1:numBytes);
+headerLine = strtrim(char(bytes(1:lineEnds(1))));
 columnNames = strtrim(lower(split(string(headerLine), ',')));
-flagTraffic = any(columnNames=="id");
-end % Ends fcn_INTERNAL_isTrafficFile
+record = struct('Offset',numBytes, 'Head',bytes(1:min(512,numBytes)), 'TailLine',bytes(lineEnds(end-1)+1:numBytes), ...
+    'Header',headerLine, 'IsTraffic',any(columnNames=="id"), 'IDColumn',find(columnNames=="id",1), ...
+    'IDTails',containers.Map('KeyType','char','ValueType','any'));
+if record.IsTraffic
+    record = fcn_INTERNAL_rememberIDTails(record, bytes(lineEnds(1)+1:end));
+end
+chunkText = char(bytes);
+end % Ends fcn_INTERNAL_readWhole
+
+%% fcn_INTERNAL_readAppended
+function [chunkText, record, numBytes] = fcn_INTERNAL_readAppended(filePath, record, fileBytes)
+% The complete rows added since the last read, after the header and the
+% last row read before (of each object in a traffic file), so that
+% every chunk can be read like a file
+newBytes = fcn_INTERNAL_readBytes(filePath, record.Offset, fileBytes - record.Offset);
+lineEnds = find(newBytes==10);
+chunkText = '';
+numBytes = 0;
+if isempty(lineEnds)
+    return;
+end
+numBytes = lineEnds(end);
+newBytes = newBytes(1:numBytes);
+if record.IsTraffic
+    newIDs = fcn_INTERNAL_lineIDs(newBytes, record.IDColumn);
+    overlap = zeros(1,0,'uint8');
+    for thisID = unique(newIDs, 'stable')
+        if isKey(record.IDTails, thisID{1})
+            overlap = [overlap, record.IDTails(thisID{1})]; %#ok<AGROW>
+        end
+    end
+    if record.IDTails.Count > 0                             % (a copy, not a handle to the old one)
+        record.IDTails = containers.Map(record.IDTails.keys, record.IDTails.values);
+    else
+        record.IDTails = containers.Map('KeyType','char','ValueType','any');
+    end
+    record = fcn_INTERNAL_rememberIDTails(record, newBytes);
+else
+    overlap = record.TailLine;
+end
+chunkText = [record.Header newline char(overlap) char(newBytes)];
+record.Offset = record.Offset + numBytes;
+newLineEnds = [0 lineEnds];
+record.TailLine = newBytes(newLineEnds(end-1)+1:numBytes);
+end % Ends fcn_INTERNAL_readAppended
+
+%% fcn_INTERNAL_lineIDs
+function ids = fcn_INTERNAL_lineIDs(bytes, idColumn)
+% The id of each row (bytes of whole rows)
+rows = splitlines(strtrim(string(char(bytes))));
+rows = rows(strlength(rows) > 0);
+parts = split(rows, ',', 2);
+if isvector(parts) && numel(rows)==1
+    parts = parts(:)';
+end
+ids = cellstr(strtrim(parts(:, idColumn)))';
+end % Ends fcn_INTERNAL_lineIDs
+
+%% fcn_INTERNAL_rememberIDTails
+function record = fcn_INTERNAL_rememberIDTails(record, bytes)
+% The last row of each object in a traffic file (bytes of whole rows)
+lineEnds = find(bytes==10);
+lineStarts = [1 lineEnds(1:end-1)+1];
+ids = fcn_INTERNAL_lineIDs(bytes, record.IDColumn);
+[uniqueIDs, lastRow] = unique(ids, 'last');
+for ith_id = 1:numel(uniqueIDs)
+    record.IDTails(uniqueIDs{ith_id}) = bytes(lineStarts(lastRow(ith_id)):lineEnds(lastRow(ith_id)));
+end
+end % Ends fcn_INTERNAL_rememberIDTails
+
+%% fcn_INTERNAL_loadChunk
+function [motionsRead, baseRows] = fcn_INTERNAL_loadChunk(chunkText, flagTraffic, fileName, fileStem, listedNames, listedFiles, defaultRow, options)
+% Read the motions in a chunk (a header and whole rows), through a
+% temporary file, with the same readers as a whole file
+chunkFile = [tempname '.csv'];
+fileID = fopen(chunkFile, 'w');
+fwrite(fileID, chunkText);
+fclose(fileID);
+cleanup = onCleanup(@() delete(chunkFile));
+if flagTraffic
+    [fileRows, fileMotions] = fcn_AnimateCar3D_loadTrafficFile(chunkFile, MeshID=char(options.DefaultMeshID), ...
+        Role=char(options.DefaultRole), InstancePrefix=[fileStem '_'], FigNum=-1);
+    baseRows = fileRows;
+    motionsRead = repmat(fcn_INTERNAL_emptyMotion(''), numel(fileMotions), 1);
+    for ith_motion = 1:numel(fileMotions)
+        motionsRead(ith_motion) = fcn_INTERNAL_normalizeMotion(fileMotions(ith_motion), fileMotions(ith_motion).Instance);
+    end
+else
+    fileIndex = find(strcmpi(listedFiles, fileName), 1);
+    if isempty(fileIndex)
+        instanceName = fileStem;
+    else
+        instanceName = listedNames{fileIndex};
+    end
+    readMotion = fcn_CarMesh3D_loadMotionCSV(chunkFile, FigNum=-1);
+    motionsRead = fcn_INTERNAL_normalizeMotion(readMotion, instanceName);
+    baseRows = defaultRow;
+    baseRows.Instance = instanceName;
+end
+end % Ends fcn_INTERNAL_loadChunk
+
+%% fcn_INTERNAL_joinMotions
+function [joined, flagJoined] = fcn_INTERNAL_joinMotions(newMotions, storedMotions)
+% Join the rows read now to each object's motion read before. The
+% chunk starts with the last row read before: rows at or before that
+% time are dropped, and yaw is shifted by whole turns to match it. Not
+% joined (flagJoined false) if new rows go back in time or the columns
+% differ. Wheel spin (summed by the motion reader from the start of what
+% it reads) carries on from its last value. Values the reader works out
+% from neighboring rows (steering and speed from the path, when the file
+% does not give them) may differ slightly at the row where chunks meet.
+joined = newMotions;
+flagJoined = true;
+fieldNames = {'Time','Pose','WheelSpin','SteerAngle','WheelLift','BodyRoll','BodyPitch','BodyHeave','LightStates'};
+for ith_motion = 1:numel(newMotions)
+    thisName = newMotions(ith_motion).Instance;
+    if ~isKey(storedMotions, thisName)
+        continue;                           % a new object: all its rows are new
+    end
+    oldMotion = storedMotions(thisName);
+    newMotion = newMotions(ith_motion);
+    lastTime = oldMotion.Time(end);
+    flagOverlap = abs(newMotion.Time - lastTime) <= 1e-9;
+    flagKeep = newMotion.Time > lastTime + 1e-9;
+    if any(~flagOverlap & ~flagKeep) || size(newMotion.Pose,2) ~= size(oldMotion.Pose,2)
+        flagJoined = false;
+        return;
+    end
+    if any(flagOverlap)
+        overlapRow = find(flagOverlap,1);
+        yawColumn = size(newMotion.Pose,2);
+        yawShift = 2*pi*round((oldMotion.Pose(end,yawColumn) - newMotion.Pose(overlapRow,yawColumn))/(2*pi));
+        newMotion.Pose(:,yawColumn) = newMotion.Pose(:,yawColumn) + yawShift;
+        % Wheel spin is summed from the start of what is read: carry on
+        % from where it was
+        if ~isempty(newMotion.WheelSpin) && ~isempty(oldMotion.WheelSpin) && size(newMotion.WheelSpin,2)==size(oldMotion.WheelSpin,2)
+            newMotion.WheelSpin = newMotion.WheelSpin + (oldMotion.WheelSpin(end,:) - newMotion.WheelSpin(overlapRow,:));
+        end
+    end
+    for ith_field = 1:numel(fieldNames)
+        oldValue = oldMotion.(fieldNames{ith_field});
+        newValue = newMotion.(fieldNames{ith_field});
+        if isempty(oldValue) && isempty(newValue)
+            continue;
+        end
+        if isempty(oldValue) ~= isempty(newValue) || size(oldValue,2) ~= size(newValue,2)
+            flagJoined = false;
+            return;
+        end
+        try
+            joined(ith_motion).(fieldNames{ith_field}) = [oldValue; newValue(flagKeep,:)];
+        catch
+            flagJoined = false;
+            return;
+        end
+    end
+end
+end % Ends fcn_INTERNAL_joinMotions
 
 %% fcn_INTERNAL_emptyMotion
 function motion = fcn_INTERNAL_emptyMotion(instanceName)

@@ -307,7 +307,23 @@ Underneath, `fcn_AnimateCar3D_playLive` uses these functions, which can also be 
 | `sceneList.csv` (optional) | the scene list: roles, meshes, colors, branches, time offsets. It may list objects whose files do not exist yet; a changed scene list restyles the objects already shown without rereading their motions. Objects not in it get `DefaultRole` (`traffic`) and `DefaultMeshID` (`sample`) |
 | `displayCriteria.txt` (optional) | changes to the display criteria, one per line, e.g. `MaxDistance = 150`, `RolesShown = ego, confederate`, `FixedTiers = ego near; confederate middle` |
 
-**Partly written files.** A file whose last character is not a line end is still being written: it is left until a later check. A file that cannot be read yet (for example, with only one row) is reported in `update.Skipped` and tried again on the next check. Files deleted from the folder remove their objects from the catalog.
+**Grown files: only the new rows are read.** A file that has grown by rows added at its end is not read again whole: the watcher reads only the new rows (with the last row read before, so units, yaw, and wheel spin carry on) and joins them to what it has. So a check costs the same however long the run: with one file grown to 36,000 rows (an hour at 10 Hz), a check with 10 new rows took 23 ms, against 76 ms to read the file whole. (Most of a check's time is the motion reader's fixed cost, about 10 ms per changed file; see Changes wanted in CarMesh3D.) Values the reader works out from neighboring rows (steering and speed from the path, when the file does not give them) may differ slightly at the rows where reads meet.
+
+**Partly written files.** A file may end partway through a row: its complete rows are read now, and the rest once complete. (The scene list and the criteria file are read only once complete.) A file that cannot be read yet (for example, with only one row) is reported in `update.Skipped` and tried again on the next check.
+
+**Deleted and replaced files.**
+
+| What happened to the file | What the watcher does |
+|---|---|
+| Rows added at its end | reads only the new rows (`update.AppendedFiles`) |
+| Deleted | removes its objects, unless another file now holds them (`update.DeletedFiles`, `update.Remove`) |
+| Replaced: shorter than what was read; its first bytes or the last row read changed; the same size with a new date; or new rows that go back in time | reads it again whole (`update.ReplacedFiles`); objects no longer in it are removed |
+| Deleted and made again between two checks | the same as replaced |
+| Edited in the middle, keeping its first bytes and the last row read | **not seen.** To change a file, write a new one under a name starting with `_` and rename it over the old one |
+| The scene list deleted | objects go back to the default role and mesh |
+| `displayCriteria.txt` deleted | the criteria stay as they are |
+
+The watcher keeps each object's motion read so far, so its memory grows with the data, as the catalog's does.
 
 **Changing the criteria while running.** The selector reads the criteria at every step, so any change (from a script, or from `displayCriteria.txt`) takes effect on the next frame. Nothing else needs resetting: the selector's memory of tiers is kept, so hysteresis still applies.
 
@@ -656,10 +672,10 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 ### To-Do
 
-1. **A target frame rate for `fcn_AnimateCar3D_playLive`:** an optional input (`TargetFrameRate`, say) to pace the run mode; it now draws as fast as it can.
-2. **Incremental reading in `fcn_AnimateCar3D_watchFolder`:** it reads a grown file whole at each check; for long runs it should read only the new rows.
-3. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
+1. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
+2. **A target frame rate for `fcn_AnimateCar3D_playLive`:** an optional input (`TargetFrameRate`, say) to pace the run mode; it now draws as fast as it can.
 **Done recently** (2026_11_20)
+- Reading only the new rows of grown files in `fcn_AnimateCar3D_watchFolder`, and handling replaced and deleted files (see [Live use](#live-use-step-3)).
 - A live-loop function, `fcn_AnimateCar3D_playLive`: the whole live loop in one call (or one step per call), with a CarMesh3D camera, caption, and GIF frames. See [Live use](#live-use-step-3); demo step 7 now uses it.
 - Path lines (step 6): the selector lists them, the player draws them; trails and previews, color policies, your own colors and markers, screen lines or ribbons. See [Path lines](#path-lines-step-6).
 - Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog` and `fcn_AnimateCar3D_updateCatalog`, each motion with only its own fields, checked against a documented motion template (returned or printed by `fcn_AnimateCar3D_buildCatalog()` with no inputs). See [Input files](#input-files).
@@ -679,6 +695,7 @@ For a later CarMesh3D release. AnimateCar3D works around each one for now; the s
 - `fcn_CarMesh3D_saveGifFrame` picks a new 256-color map for each frame, so small colored details (thin lines, tinted vehicles) can turn gray. An option for a fixed color map would help. (Work-around: the main demo writes its GIF with a fixed color map.)
 - The sample car as a vehicle folder in CarMesh3D's `Data`, with its finished mesh and levels file, so that `'sample'` loads like any other vehicle. (Work-around: `fcn_AnimateCar3D_loadMeshes` makes the sample car and its levels once, about 3 s, and keeps them in a cache file in MATLAB's temporary folder, `SampleCacheFile`, remade when the CarMesh3D copy changes.)
 - A version function, so AnimateCar3D can check that the CarMesh3D release is new enough.
+- `fcn_CarMesh3D_loadMotionCSV` to also accept a table, or numbers and column names, in place of a file name. The watcher could then keep each file's numbers, read new rows itself (about 0.01 ms instead of about 10 ms per file, the cost of `readtable`), and convert all the rows each time, so that values worked out from neighboring rows (wheel spin, steering, speed) are exact where reads meet. (Work-around: the watcher hands each chunk of new rows to the reader through a temporary file, and joins the results.)
 
 ## License
 

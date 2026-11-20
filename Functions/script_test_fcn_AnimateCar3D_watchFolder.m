@@ -149,12 +149,16 @@ fileID = fopen(partialFile, 'w');
 fprintf(fileID, 'time,X,Y,yaw\n0,0,10,0\n0.5,0.6,10,0\n1.0,1.2');   % cut off partway
 fclose(fileID);
 [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState, Force=true);
-assert(isempty(update.Add) && strcmp(update.Skipped(1).File, 'walker.csv'));
+% (the 2 complete rows are read now; the last one later)
+assert(isequal({update.Add.Instance}, {'walker'}) && numel(update.Motions.Time)==2);
+assert(strcmp(update.Skipped(1).File, 'walker.csv') && contains(update.Skipped(1).Reason, 'not complete'));
 fileID = fopen(partialFile, 'a');
 fprintf(fileID, ',10,0\n');
 fclose(fileID);
 [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState, Force=true);
 assert(isequal({update.Add.Instance}, {'walker'}) && numel(update.Motions.Time)==3);
+assert(isequal(update.AppendedFiles, {'walker.csv'}) && isempty(update.Skipped));
+assert(max(abs(update.Motions.Pose(:,1) - [0; 0.6; 1.2])) < 1e-9);
 assert(strcmp(update.Add.Role,'traffic') && strcmp(update.Add.MeshID,'sample'));   % not in the scene list: defaults
 
 %% TEST case: A changed scene list changes rows without reading motions; a criteria file
@@ -176,6 +180,77 @@ walkerRow = update.Add(strcmp({update.Add.Instance},'walker'));
 assert(strcmp(walkerRow.Role,'pedestrian'));
 assert(endsWith(update.CriteriaFile, 'displayCriteria.txt'));
 assert(numel(newList)==3);
+
+%% TEST case: Only new rows are read, and the joined motion equals reading the whole file
+figNum = 20006;
+titleString = sprintf('TEST case: Only new rows are read, and the joined motion equals reading the whole file');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+growFolder = [tempname '_grow'];
+mkdir(growFolder);
+growFile = fullfile(growFolder, 'spinner.csv');
+growTime = (0:0.1:20)';
+growYaw = 0.4*growTime;                                % turns past pi: yaw wraps in some readers
+growLines = compose('%.1f,%.4f,%.4f,%.6f', [growTime, 30*cos(growYaw), 30*sin(growYaw), growYaw]);
+writelines(["time,X,Y,yaw"; string(growLines(1:100))], growFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, Force=true);
+firstBytes = update.BytesRead;
+for ith_chunk = 1:4
+    pause(0.02);
+    writelines(string(growLines(100+(ith_chunk-1)*25+1 : 100+ith_chunk*25)), growFile, WriteMode='append');
+    [update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+    assert(isequal(update.AppendedFiles, {'spinner.csv'}) && isempty(update.ReplacedFiles));
+    assert(update.BytesRead < firstBytes/2);           % only the new rows (and one row before)
+end
+wholeMotion = fcn_CarMesh3D_loadMotionCSV(growFile, FigNum=-1);
+assert(numel(update.Motions.Time)==numel(wholeMotion.Time) && max(abs(update.Motions.Time - wholeMotion.Time(:))) < 1e-9);
+assert(max(abs(update.Motions.Pose - wholeMotion.Pose), [], 'all') < 1e-9);
+assert(max(abs(update.Motions.WheelSpin - wholeMotion.WheelSpin), [], 'all') < 0.05);   % (radians; summed speeds meet at the joins)
+
+%% TEST case: Replaced files are read again whole; deleted and re-made files; traffic files grow by object
+figNum = 20007;
+titleString = sprintf('TEST case: Replaced files are read again whole; deleted and re-made files; traffic files grow by object');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+% A replaced motion file (shorter, other numbers): read whole
+writelines(["time,X,Y,yaw"; "0,5,5,0"; "1,6,5,0"], growFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(update.ReplacedFiles, {'spinner.csv'}) && numel(update.Motions.Time)==2 && update.Motions.Pose(1,1)==5);
+assert(isempty(update.Remove));
+
+% The same size, but other numbers (a new date): read whole
+pause(1.1);                                             % (so the date differs)
+writelines(["time,X,Y,yaw"; "0,7,5,0"; "1,8,5,0"], growFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(update.ReplacedFiles, {'spinner.csv'}) && update.Motions.Pose(1,1)==7);
+
+% Deleted and made again between checks: read whole, not removed
+delete(growFile);
+writelines(["time,X,Y,yaw"; "0,9,5,0"; "1,10,5,0"; "2,11,5,0"], growFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isempty(update.Remove) && numel(update.Motions.Time)==3 && update.Motions.Pose(1,1)==9);
+
+% A traffic file grows by object (one new row for car 2), then is
+% replaced without car 1: car 1 is removed
+trafficFile = fullfile(growFolder, 'road.csv');
+writelines(["id,time,X,Y,yaw"; "1,0,0,0,0"; "2,0,50,4,3.1"; "1,1,10,0,0"; "2,1,40,4,3.1"], trafficFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(sort({update.Add.Instance}), {'road_1','road_2'}));
+writelines("2,2,30,4,3.1", trafficFile, WriteMode='append');
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(update.AppendedFiles, {'road.csv'}) && isequal({update.Motions.Instance}, {'road_2'}));
+assert(isequal(update.Motions.Time(:)', [0 1 2]) && update.Motions.Pose(3,1)==30);
+writelines(["id,time,X,Y,yaw"; "2,0,50,4,3.1"; "2,1,40,4,3.1"; "2,2,30,4,3.1"; "2,3,20,4,3.1"], trafficFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(update.ReplacedFiles, {'road.csv'}) && isequal(update.Remove, {'road_1'}) && update.NumInstances==2);
+
+% A deleted file removes its object
+delete(trafficFile);
+[update, growState] = fcn_AnimateCar3D_watchFolder(growFolder, WatchState=growState, Force=true);
+assert(isequal(update.Remove, {'road_2'}) && update.NumInstances==1 && ~isKey(growState.Motions, 'road_2'));
+rmdir(growFolder, 's');
 
 %% TEST case: The watcher and updateCatalog together give the same catalog as building it at once
 figNum = 20005;
