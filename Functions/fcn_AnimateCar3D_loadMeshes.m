@@ -10,13 +10,20 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 % and the vehicle's size, for drawing it as a box (far tier).
 %
 % Meshes are named by their CarMesh3D vehicle ID (the Data folder name,
-% YEAR_Make_Model_Trimline), or 'sample' for CarMesh3D's built-in sample
-% car scaled to a generic sedan.
+% YEAR_Make_Model_Trimline), 'sample' for CarMesh3D's built-in sample
+% car scaled to a generic sedan, or a simple shape: 'box', 'bar',
+% 'cylinder', or 'pedestrian' (see fcn_AnimateCar3D_fillSimpleShape), for
+% static objects, pedestrians, moving items, and vehicles known only by
+% their size. Simple shapes are always drawn the far tier's way (all in
+% one patch), sized by their display list Size (or their default size).
+%
+% While a live animation runs, new mesh IDs can appear: give the mesh
+% set already loaded as MeshSet, and only the new meshes are loaded.
 %
 % FORMAT:
 %
 %       meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs,...
-%           (LowFaces=numFaces), (FigNum=figNum))
+%           (LowFaces=numFaces), (MeshSet=meshSet), (FigNum=figNum))
 %
 %      Optional inputs are given as Name=Value pairs after the required
 %      inputs, in any order. Any option not given takes its default.
@@ -25,12 +32,15 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 %
 %      meshIDs: a vehicle ID, or a cell array of them. Each must be a
 %      vehicle in the CarMesh3D Data folder with a finished mesh
-%      (vehicleMesh_<ID>.mat), or 'sample'.
+%      (vehicleMesh_<ID>.mat), 'sample', or a simple shape name.
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
 %      LowFaces: the face count of the low-detail meshes. Default 400.
 %      (The count is a target: the result can be somewhat higher.)
+%
+%      MeshSet: a mesh set from an earlier call. The new IDs are added to
+%      it; IDs it already has are not loaded again. Default [].
 %
 %      FigNum: a figure number to show each mesh at both detail levels.
 %      Empty (default) for no figure; -1 for fast mode (no input checks).
@@ -49,7 +59,10 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 %               box: the vehicle origin is on the ground below the rear
 %               axle)
 %           FullFaces, LowFaces: face counts
-%      meshSet.IDs lists the IDs in the order given.
+%           Shape: for a simple shape, the shape (from
+%               fcn_AnimateCar3D_fillSimpleShape); [] for a vehicle
+%      meshSet.IDs lists the IDs in the order given (simple shape names
+%      in lower case).
 %
 % DEPENDENCIES:
 %
@@ -57,6 +70,7 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 %      fcn_CarMesh3D_simplifyMesh, fcn_CarMesh3D_fillVehicleSpec,
 %      fcn_CarMesh3D_fillSampleMesh, fcn_CarMesh3D_labelParts,
 %      fcn_CarMesh3D_fitMeshToSpec, fcn_CarMesh3D_plotVehicle
+%      fcn_AnimateCar3D_fillSimpleShape
 %
 % EXAMPLES:
 %
@@ -93,6 +107,7 @@ arguments
 
     meshIDs
     options.LowFaces = 400    % faces in the low-detail (middle tier) meshes
+    options.MeshSet = []      % an existing mesh set to add to
     options.FigNum = []       % figure to show the meshes; -1 for fast mode
 end
 
@@ -150,6 +165,11 @@ if 0==flag_max_speed
             error('meshIDs must be a vehicle ID or a cell array of vehicle IDs');
         end
 
+        % Check the MeshSet input
+        if ~isempty(options.MeshSet) && ~(isstruct(options.MeshSet) && isfield(options.MeshSet,'IDs'))
+            error('MeshSet must come from fcn_AnimateCar3D_loadMeshes');
+        end
+
         % Check the LowFaces input
         if ~isnumeric(options.LowFaces) || ~isscalar(options.LowFaces) || options.LowFaces<20
             error('LowFaces must be a number of 20 or more');
@@ -180,10 +200,28 @@ end
 
 
 meshIDs = cellstr(meshIDs);
-meshSet = struct;
-meshSet.IDs = meshIDs(:)';
+[~, simpleIDs] = fcn_AnimateCar3D_fillSimpleShape('', FigNum=-1);
+flagSimple = ismember(lower(meshIDs), simpleIDs);
+meshIDs(flagSimple) = lower(meshIDs(flagSimple));
+if isempty(options.MeshSet)
+    meshSet = struct;
+    meshSet.IDs = cell(1,0);
+else
+    meshSet = options.MeshSet;      % add only the meshes not loaded yet
+end
+meshIDs = setdiff(meshIDs(:)', meshSet.IDs, 'stable');
+meshSet.IDs = [meshSet.IDs, meshIDs];
 for ith_mesh = 1:length(meshIDs)
     thisID = meshIDs{ith_mesh};
+
+    % A simple shape (box, bar, cylinder, pedestrian): no mesh; its
+    % default size, and its origin where the shape puts it
+    if any(strcmp(thisID, simpleIDs))
+        shape = fcn_AnimateCar3D_fillSimpleShape(thisID, FigNum=-1);
+        meshSet.(thisID) = struct('ID',thisID, 'Full',[], 'Low',[], 'Size',shape.DefaultSize, ...
+            'RearOverhang',shape.RearFraction*shape.DefaultSize(1), 'FullFaces',0, 'LowFaces',0, 'Shape',shape);
+        continue;
+    end
 
     % The full mesh
     if strcmpi(thisID,'sample')
@@ -220,6 +258,7 @@ for ith_mesh = 1:length(meshIDs)
     entry.RearOverhang = -vertexMin(1);
     entry.FullFaces = size(fullMesh.Faces,1);
     entry.LowFaces = size(lowMesh.Faces,1);
+    entry.Shape = [];
     meshSet.(matlab.lang.makeValidName(thisID)) = entry;
 end
 
@@ -238,9 +277,10 @@ if flag_do_plots
 
     figure(figNum);
     clf;
-    Nmeshes = length(meshSet.IDs);
+    plotIDs = meshSet.IDs(~ismember(meshSet.IDs, simpleIDs));
+    Nmeshes = length(plotIDs);
     for ith_mesh = 1:Nmeshes
-        entry = meshSet.(matlab.lang.makeValidName(meshSet.IDs{ith_mesh}));
+        entry = meshSet.(matlab.lang.makeValidName(plotIDs{ith_mesh}));
         detailNames = {'Full','Low'};
         for ith_detail = 1:2
             subplot(Nmeshes, 2, 2*(ith_mesh-1)+ith_detail);

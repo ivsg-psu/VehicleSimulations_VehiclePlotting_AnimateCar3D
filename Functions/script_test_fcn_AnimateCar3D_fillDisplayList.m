@@ -110,6 +110,13 @@ assert(isempty(displayList.Boxes.Instance));
 figHandles = get(groot, 'Children');
 assert(~any(figHandles==figNum));
 
+%% TEST case: Simple shapes are always far
+displayList = fcn_AnimateCar3D_fillDisplayList(Instance={'b','v','p'}, MeshID={'box','sample','Pedestrian'}, ...
+    Pose=zeros(3,3), Size=[10 5 3; NaN NaN NaN; NaN NaN NaN]);
+assert(isequal(displayList.Boxes.Instance, {'b';'p'}) && numel(displayList.Objects)==1);
+assert(isequal(displayList.Boxes.MeshID, {'box';'pedestrian'}));     % shape names in lower case
+assert(isequal(displayList.Boxes.Size(1,:), [10 5 3]));
+
 %% TEST case: An empty list (nothing to draw)
 displayList = fcn_AnimateCar3D_fillDisplayList();
 assert(isempty(displayList.Objects) && isempty(displayList.Boxes.Instance));

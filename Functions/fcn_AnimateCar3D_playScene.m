@@ -292,8 +292,14 @@ end
 if ~isgraphics(playerState.ScratchAxes)
     % A hidden figure (with no number, so it never takes a user's figure
     % number) where new vehicles are drawn before moving into the scene
+    % (Making a figure makes it the current one: give that back to the
+    % scene's figure, so that commands after this call, such as title or
+    % campos, still go to the scene)
+    sceneFigure = ancestor(playerState.Axes,'figure');
     scratchFigure = figure('Visible','off', 'IntegerHandle','off', 'Name','fcn_AnimateCar3D_playScene scratch');
     playerState.ScratchAxes = axes('Parent',scratchFigure);
+    set(groot, 'CurrentFigure', sceneFigure);
+    set(sceneFigure, 'CurrentAxes', playerState.Axes);
 end
 playerState.Step = playerState.Step + 1;
 thisStep = playerState.Step;
@@ -544,7 +550,10 @@ end % Ends fcn_INTERNAL_poseToMatrix
 
 %% fcn_INTERNAL_updateBoxes
 function boxPatch = fcn_INTERNAL_updateBoxes(boxPatch, boxes, meshSet, axesHandle)
-% All far boxes in one patch: 8 corners and 5 faces (no bottom) per box
+% All far objects in one patch: far vehicles as boxes (5 faces, no
+% bottom), and simple shapes (pedestrians, bars, cylinders, boxes) each
+% in its own shape. Every object is scaled by its size, then turned by
+% its roll, pitch, and yaw, and moved to its position.
 Nboxes = numel(boxes.Instance);
 if Nboxes==0
     if isgraphics(boxPatch)
@@ -553,52 +562,115 @@ if Nboxes==0
     return;
 end
 
-% Sizes and rear overhangs (from the mesh where no size was given)
+% Sizes, rear overhangs (from the mesh where no size was given), and the
+% shape each object is drawn as
 sizes = boxes.Size;
 rearOverhangs = zeros(Nboxes,1);
 [uniqueIDs, ~, idIndex] = unique(boxes.MeshID);
+shapes = cell(numel(uniqueIDs),1);
 for ith_id = 1:numel(uniqueIDs)
     meshEntry = meshSet.(matlab.lang.makeValidName(uniqueIDs{ith_id}));
     rows = idIndex==ith_id;
     flagNoSize = rows & any(isnan(sizes),2);
     sizes(flagNoSize,:) = repmat(meshEntry.Size, sum(flagNoSize), 1);
     rearOverhangs(rows) = meshEntry.RearOverhang * sizes(rows,1) / meshEntry.Size(1);
+    if isfield(meshEntry,'Shape') && ~isempty(meshEntry.Shape)
+        shapes{ith_id} = meshEntry.Shape;
+    else
+        shapes{ith_id} = fcn_INTERNAL_vehicleBox;
+    end
 end
-
-% Corners in each box's own frame, then rotated by yaw and moved
-cornerX = [0 1 1 0 0 1 1 0];
-cornerY = [-0.5 -0.5 0.5 0.5 -0.5 -0.5 0.5 0.5];
-cornerZ = [0 0 0 0 1 1 1 1];
-localX = sizes(:,1)*cornerX - rearOverhangs;          % Nboxes x 8
-localY = sizes(:,2)*cornerY;
-localZ = sizes(:,3)*cornerZ;
-yaw = boxes.Pose(:,6);
-globalX = boxes.Pose(:,1) + cos(yaw).*localX - sin(yaw).*localY;
-globalY = boxes.Pose(:,2) + sin(yaw).*localX + cos(yaw).*localY;
-globalZ = boxes.Pose(:,3) + localZ;
-vertices = [reshape(globalX',[],1), reshape(globalY',[],1), reshape(globalZ',[],1)];
-
-% Faces (corners counted counterclockwise from outside) and colors
-oneBoxFaces = [5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8];
-offsets = kron((0:Nboxes-1)'*8, ones(5,1));
-faces = repmat(oneBoxFaces, Nboxes, 1) + offsets;
 colors = boxes.Color;
 colors(any(isnan(colors),2),:) = repmat([0.55 0.55 0.58], sum(any(isnan(colors),2)), 1);
-faceColors = kron(colors, ones(5,1));
-faceColors(1:5:end,:) = min(1, faceColors(1:5:end,:)*1.15);   % lighter roofs
+poses = boxes.Pose;
+
+% Each shape's objects at once
+faceWidth = max(cellfun(@(shape) size(shape.Faces,2), shapes));
+vertexBlocks = cell(numel(uniqueIDs),1);
+faceBlocks = cell(numel(uniqueIDs),1);
+colorBlocks = cell(numel(uniqueIDs),1);
+vertexCount = 0;
+for ith_id = 1:numel(uniqueIDs)
+    shape = shapes{ith_id};
+    rows = find(idIndex==ith_id);
+    Nrows = numel(rows);
+    Nverts = size(shape.Vertices,1);
+    Nfaces = size(shape.Faces,1);
+
+    % Corners in each object's own frame (Nrows x Nverts): the shape's x
+    % runs from the rear, so x = length*(unit x + RearFraction) - overhang
+    localX = sizes(rows,1)*(shape.Vertices(:,1)' + shape.RearFraction) - rearOverhangs(rows);
+    localY = sizes(rows,2)*shape.Vertices(:,2)';
+    localZ = sizes(rows,3)*shape.Vertices(:,3)';
+
+    % Turn by roll (x), then pitch (y), then yaw (z), as CarMesh3D does
+    roll = poses(rows,4);
+    pitch = poses(rows,5);
+    yaw = poses(rows,6);
+    y1 = cos(roll).*localY - sin(roll).*localZ;
+    z1 = sin(roll).*localY + cos(roll).*localZ;
+    x2 = cos(pitch).*localX + sin(pitch).*z1;
+    z2 = -sin(pitch).*localX + cos(pitch).*z1;
+    globalX = poses(rows,1) + cos(yaw).*x2 - sin(yaw).*y1;
+    globalY = poses(rows,2) + sin(yaw).*x2 + cos(yaw).*y1;
+    globalZ = poses(rows,3) + z2;
+    vertexBlocks{ith_id} = [reshape(globalX',[],1), reshape(globalY',[],1), reshape(globalZ',[],1)];
+
+    % Faces, with each object's vertex offset, padded to one width
+    % (Each face's corners are reversed: MATLAB takes a patch face's
+    % normal from its corners clockwise, and the shapes list them
+    % counterclockwise seen from outside, so without this the lit side
+    % of every face would be the inside)
+    shapeFaces = [fcn_INTERNAL_reverseCorners(shape.Faces), nan(Nfaces, faceWidth-size(shape.Faces,2))];
+    offsets = kron(vertexCount + (0:Nrows-1)'*Nverts, ones(Nfaces,1));
+    faceBlocks{ith_id} = repmat(shapeFaces, Nrows, 1) + offsets;
+    vertexCount = vertexCount + Nrows*Nverts;
+
+    % Colors: the object's color, or the shape's fixed colors; tops
+    % brighter
+    objectColors = kron(colors(rows,:), ones(Nfaces,1));
+    fixedColors = repmat(shape.FaceColor, Nrows, 1);
+    flagFixed = ~any(isnan(fixedColors),2);
+    objectColors(flagFixed,:) = fixedColors(flagFixed,:);
+    colorBlocks{ith_id} = min(1, objectColors .* repmat(shape.FaceShade, Nrows, 1));
+end
+vertices = vertcat(vertexBlocks{:});
+faces = vertcat(faceBlocks{:});
+faceColors = vertcat(colorBlocks{:});
 
 if ~isgraphics(boxPatch)
     boxPatch = patch('Parent',axesHandle, 'Faces',faces, 'Vertices',vertices, ...
         'FaceVertexCData',faceColors, 'FaceColor','flat', 'EdgeColor',[0.3 0.3 0.3], ...
         'LineWidth',0.25, 'FaceLighting','flat', 'BackFaceLighting','lit', ...
-        'DisplayName','Far vehicles (boxes)');
+        'DisplayName','Far vehicles and simple shapes');
 else
-    if size(get(boxPatch,'Faces'),1) ~= size(faces,1)
+    if ~isequal(size(get(boxPatch,'Faces')), size(faces))
         set(boxPatch, 'Faces', []);
         set(boxPatch, 'Vertices',vertices, 'Faces',faces, 'FaceVertexCData',faceColors);
     else
-        set(boxPatch, 'Vertices',vertices, 'FaceVertexCData',faceColors);
+        set(boxPatch, 'Vertices',vertices, 'Faces',faces, 'FaceVertexCData',faceColors);
     end
     set(boxPatch, 'Visible','on');
 end
 end % Ends fcn_INTERNAL_updateBoxes
+
+%% fcn_INTERNAL_reverseCorners
+function faces = fcn_INTERNAL_reverseCorners(faces)
+% Reverse the order of each face's corners (NaN padding stays at the end)
+for ith_face = 1:size(faces,1)
+    corners = faces(ith_face, ~isnan(faces(ith_face,:)));
+    faces(ith_face, 1:numel(corners)) = fliplr(corners);
+end
+end % Ends fcn_INTERNAL_reverseCorners
+
+%% fcn_INTERNAL_vehicleBox
+function shape = fcn_INTERNAL_vehicleBox
+% The box a far vehicle is drawn as: x from 0 to 1 from the rear bumper
+% (RearFraction 0: the vehicle's rear overhang places it), no bottom
+shape = struct;
+shape.Vertices = [0 -0.5 0; 1 -0.5 0; 1 0.5 0; 0 0.5 0; 0 -0.5 1; 1 -0.5 1; 1 0.5 1; 0 0.5 1];
+shape.Faces = [5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8];
+shape.FaceColor = nan(5,3);
+shape.FaceShade = [1.15; 1; 1; 1; 1];   % a lighter roof
+shape.RearFraction = 0;
+end % Ends fcn_INTERNAL_vehicleBox

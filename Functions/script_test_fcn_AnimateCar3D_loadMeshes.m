@@ -84,6 +84,21 @@ assert(isequal(get(gcf,'Number'),figNum));
 close all;
 fprintf(1,'Figure: 2XXXXXX: TEST cases\n');
 
+%% TEST case: The plain box, and the other simple shapes
+meshSet = fcn_AnimateCar3D_loadMeshes({'box','sample'});
+assert(isequal(meshSet.box.Size,[1 1 1]) && meshSet.box.RearOverhang==0.5 && isempty(meshSet.box.Full));
+meshSet = fcn_AnimateCar3D_loadMeshes({'Pedestrian','bar','cylinder'});
+assert(isequal(meshSet.IDs, {'pedestrian','bar','cylinder'}));
+assert(isequal(meshSet.pedestrian.Size,[0.35 0.55 1.75]) && meshSet.bar.RearOverhang==0);
+assert(strcmp(meshSet.cylinder.Shape.ID,'cylinder'));
+
+%% TEST case: Add meshes to a set already loaded
+sampleSet = fcn_AnimateCar3D_loadMeshes('sample');
+loadTimer = tic;
+bigSet = fcn_AnimateCar3D_loadMeshes({'sample','box','pedestrian'}, MeshSet=sampleSet);
+assert(toc(loadTimer) < 1);                 % the sample car is not made again
+assert(isequal(bigSet.IDs, {'sample','box','pedestrian'}) && isequal(bigSet.sample, sampleSet.sample));
+
 %% TEST case: One ID as text, and a different face count
 figNum = 20001;
 titleString = sprintf('TEST case: One ID as text, and a different face count');

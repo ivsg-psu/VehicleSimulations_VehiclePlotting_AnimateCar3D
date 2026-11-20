@@ -144,6 +144,39 @@ playerState = fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, A
 assert(isempty(playerState.Pool));
 assert(isempty(findobj(gca,'Type','hgtransform')));
 
+%% TEST case: Simple shapes: pedestrians, a raised gate arm, posts, and a far car
+figNum = 20005;
+titleString = sprintf('TEST case: Simple shapes: pedestrians, a raised gate arm, posts, and a far car');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); clf;
+shapeSet = fcn_AnimateCar3D_loadMeshes({'sample','pedestrian','bar','cylinder'}, LowFaces=200, FigNum=-1);
+shapeList = fcn_AnimateCar3D_fillDisplayList(Instance={'walker1','walker2','gate','post','farCar'}, ...
+    MeshID={'pedestrian','pedestrian','bar','cylinder','sample'}, Tier='far', ...
+    Pose=[0 0 0 0 0 pi/2; 2 1 0 0 0 0; 5 -3 1 0 -pi/2 pi/2; 5 -3.4 0 0 0 0; 15 5 0 0 0 0], ...
+    Size=[NaN NaN NaN; NaN NaN 1.6; NaN NaN NaN; 0.3 0.3 1.1; NaN NaN NaN], ...
+    Color=[0.8 0.2 0.2; 0.2 0.6 0.2; 0.9 0.9 0.1; 0.3 0.3 0.3; NaN NaN NaN]);
+playerState = fcn_AnimateCar3D_playScene(shapeList, shapeSet, FigNum=figNum);
+currentFigure = get(groot,'CurrentFigure');
+assert(isequal(currentFigure.Number, figNum) && isequal(currentFigure.CurrentAxes, playerState.Axes));   % the scene stays current
+axis equal; view(-30,25);
+shapePatch = playerState.BoxPatch;
+vertices = get(shapePatch,'Vertices');
+pedestrianShape = fcn_AnimateCar3D_fillSimpleShape('pedestrian');
+barShape = fcn_AnimateCar3D_fillSimpleShape('bar');
+cylinderShape = fcn_AnimateCar3D_fillSimpleShape('cylinder');
+assert(size(vertices,1) == 2*size(pedestrianShape.Vertices,1) + size(barShape.Vertices,1) + size(cylinderShape.Vertices,1) + 8);
+assert(size(get(shapePatch,'Faces'),1) == 2*size(pedestrianShape.Faces,1) + 6 + 13 + 5);
+assert(abs(max(vertices(:,3)) - 5) < 1e-6);   % the raised arm: 1 m up, then its 4 m length straight up
+shapeFaces = get(shapePatch,'Faces');           % corners clockwise seen from outside (MATLAB's way)
+postCenter = [5 -3.4 0.55];
+postFaces = find(all(ismember(shapeFaces(:,1:4), find(abs(vertices(:,1)-5)<0.2 & abs(vertices(:,2)+3.4)<0.2 & vertices(:,3)<1.2)),2));
+assert(numel(postFaces)==13);
+for ith_face = postFaces'
+    corners = shapeFaces(ith_face, ~isnan(shapeFaces(ith_face,:)));
+    rightHandNormal = cross(vertices(corners(2),:)-vertices(corners(1),:), vertices(corners(3),:)-vertices(corners(1),:));
+    assert(dot(rightHandNormal, mean(vertices(corners,:),1) - postCenter) < 0);
+end
+
 %% Fast Mode Tests
 
 %% Basic example - NO FIGURE given (draws in the current figure)

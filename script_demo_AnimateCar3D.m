@@ -131,7 +131,9 @@ checkReport = fcn_AnimateCar3D_checkCarMesh3D(FigNum=-1);
 %% Step 2. Load the vehicle meshes, at two levels of detail
 % Each mesh is kept as the finished CarMesh3D mesh (near tier) and a
 % low-detail copy (middle tier); its size is kept for far-tier boxes.
-meshSet = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','2014_Ford_TransitConnect_XLTCargoLWB'}, FigNum=2);
+% ('box' is a plain box: for static objects, and for vehicles known only
+% by their size)
+meshSet = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','2014_Ford_TransitConnect_XLTCargoLWB','box'}, FigNum=2);
 
 
 %% Step 3. One vehicle splitting into ten decision branches
@@ -201,7 +203,7 @@ for ith_step = 1:numel(timeSteps)
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
     totalCreated = totalCreated + playerState.Stats.NumCreated;
     totalReused = totalReused + playerState.Stats.NumReused;
-    title(sprintf('t = %.2f s', t));
+    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.2f s', t));
     drawnow;
     if flag_saveGifs && mod(ith_step-1,2)==0
         % A GIF has only 256 colors. A fixed set (the first frame's 30
@@ -226,6 +228,442 @@ fprintf(1,'Branching demo: %d steps; %d vehicles drawn new, %d reused (the ego''
 % 100 to 1000 vehicles around the ego vehicle, using the detail tiers.
 
 
+%% Step 5. A confederate with branches, and the ego vehicle's responses
+% The full pipeline: scene list and motions -> object catalog ->
+% selector (with display criteria) -> scene player.
+%
+% A confederate van comes up a side street toward the ego's road. At
+% 2.5 s it splits into three possible maneuvers: (1) it stops, (2) it
+% crosses the road, (3) it turns right onto the road, ahead of the ego.
+% At 3 s the ego splits into three responses, each linked (respondsTo) to
+% the confederate branch it answers: (1) carry on, (2) brake hard,
+% (3) slow and change lanes to the left. Each confederate branch and the
+% ego response to it share a color. Brake lights come on when slowing.
+vanID = '2014_Ford_TransitConnect_XLTCargoLWB';
+vanSpec = meshSet.(matlab.lang.makeValidName(vanID)).Full.VehicleSpec;
+dt = 0.05;
+
+% The motions (simple kinematics: speed and curvature over time)
+egoMotion  = fcn_INTERNAL_integrateMotion('ego', (0:dt:3)', [0 0 0], 0, @(t) 10+0*t, @(t) 0*t, priusSpec);
+egoEnd = [egoMotion.Pose(end,:), egoMotion.WheelSpin(end,1)];
+responseTime = (3:dt:9)';
+laneChange = @(t) (t>=3.3 & t<=5.3) .* (2*pi*3.6/(9*2)^2) .* sin(2*pi*(t-3.3)/2);
+egoResponses = [ ...
+    fcn_INTERNAL_integrateMotion('ego_carryOn', responseTime, egoEnd(1:3), egoEnd(4), @(t) 10+0*t, @(t) 0*t, priusSpec); ...
+    fcn_INTERNAL_integrateMotion('ego_brake',   responseTime, egoEnd(1:3), egoEnd(4), @(t) max(0, 10-6*(t-3)), @(t) 0*t, priusSpec); ...
+    fcn_INTERNAL_integrateMotion('ego_swerve',  responseTime, egoEnd(1:3), egoEnd(4), @(t) max(8, 10-1.5*(t-3)), laneChange, priusSpec)];
+vanMotion = fcn_INTERNAL_integrateMotion('van', (0:dt:2.5)', [70 -45 pi/2], 0, @(t) 8+0*t, @(t) 0*t, vanSpec);
+vanEnd = [vanMotion.Pose(end,:), vanMotion.WheelSpin(end,1)];
+maneuverTime = (2.5:dt:9)';
+rightTurn = @(t) -(1/10) * (t >= 2.5+15/8 & t < 2.5+15/8+(pi*10/2)/8);
+vanManeuvers = [ ...
+    fcn_INTERNAL_integrateMotion('van_stops',   maneuverTime, vanEnd(1:3), vanEnd(4), @(t) max(0, 8-5*(t-2.5)), @(t) 0*t, vanSpec); ...
+    fcn_INTERNAL_integrateMotion('van_crosses', maneuverTime, vanEnd(1:3), vanEnd(4), @(t) 8+0*t, @(t) 0*t, vanSpec); ...
+    fcn_INTERNAL_integrateMotion('van_turns',   maneuverTime, vanEnd(1:3), vanEnd(4), @(t) 8+0*t, rightTurn, vanSpec)];
+
+% The scene list (in memory here; it could equally be a CSV file read
+% with fcn_AnimateCar3D_loadSceneList)
+pairColors = [0.20 0.65 0.25; 0.95 0.55 0.10; 0.55 0.30 0.80];
+sceneRows = struct('instance', {'ego','ego_carryOn','ego_brake','ego_swerve','van','van_stops','van_crosses','van_turns'}, ...
+    'role', {'ego','ego','ego','ego','confederate','confederate','confederate','confederate'}, ...
+    'meshID', {priusID, priusID, priusID, priusID, vanID, vanID, vanID, vanID}, ...
+    'branchOf', {'','ego','ego','ego','','van','van','van'}, 'branchID', {0,1,2,3,0,1,2,3}, ...
+    'respondsTo', {'','van_stops','van_crosses','van_turns','','','',''}, ...
+    'color', {[],pairColors(1,:),pairColors(2,:),pairColors(3,:),[],pairColors(1,:),pairColors(2,:),pairColors(3,:)});
+sceneList = fcn_AnimateCar3D_loadSceneList(sceneRows);
+
+% The catalog, with the cube grid as the static scene
+staticScene = fcn_AnimateCar3D_loadStaticScene(fullfile(pwd,'Data','staticScene_cubeGrid.csv'));
+catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoMotion; egoResponses; vanMotion; vanManeuvers], ...
+    StaticScene=staticScene, FigNum=5);
+
+% Display criteria: the camera's view (the default). This camera
+% overlooks the crossing from 30 to 70 m away, so the tier distances are
+% set for that; confederates are drawn in full, like the ego.
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=90, MiddleDistance=150, FarDistance=250, ...
+    FixedTiers={'ego','near'; 'confederate','near'}, BranchAlpha=0.55);
+
+% The scene, camera, and loop
+figNum = 6;
+figure(figNum); clf;
+set(gcf, 'Position', [100 100 800 450], 'Color', 'w');
+fcn_CarMesh3D_plotScene(GroundExtent=[-60 200 -80 80], GridSpacing=10, FigNum=figNum);
+axis off;
+line([-60 200], [-1.8 -1.8], [0.02 0.02], 'Color', [0.95 0.95 0.95], 'LineWidth', 1.5);   % road edges
+line([-60 200], [5.4 5.4], [0.02 0.02], 'Color', [0.95 0.95 0.95], 'LineWidth', 1.5);
+campos([42 34 21]); camtarget([70 -10 0]); camva(44);
+set(gca, 'Projection', 'perspective');
+timeSteps = (0:dt:9)';
+playerState = [];
+selectorState = [];
+gifFile = fullfile(pwd,'Images','confederate_branchesAndResponses.gif');
+gifFrame = 0;
+branchNames = {egoResponses.Instance, vanManeuvers.Instance};
+branchLines = gobjects(numel(branchNames),1);
+for ith_step = 1:numel(timeSteps)
+    t = timeSteps(ith_step);
+    [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
+        SelectorState=selectorState, Camera=gca);
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
+
+    % Path lines on the ground for each branch, so far
+    for ith_branch = 1:numel(branchNames)
+        motion = [egoResponses; vanManeuvers];
+        motion = motion(ith_branch);
+        rows = motion.Time <= t + 1e-9;
+        if any(rows)
+            colorRow = mod(ith_branch-1,3)+1;
+            if ~isgraphics(branchLines(ith_branch))
+                branchLines(ith_branch) = line(NaN, NaN, NaN, 'Color', pairColors(colorRow,:), 'LineWidth', 2);
+            end
+            set(branchLines(ith_branch), 'XData', motion.Pose(rows,1), 'YData', motion.Pose(rows,2), 'ZData', 0.03*ones(sum(rows),1));
+        end
+    end
+    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.2f s', t));
+    drawnow;
+    if flag_saveGifs && mod(ith_step-1,2)==0
+        gifFrame = gifFrame + 1;
+        if gifFrame==1
+            firstImage = getframe(gcf);
+            [~, firstColors] = rgb2ind(firstImage.cdata, 30, 'nodither');
+            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
+            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:); pairColors; criteria.ConfederateColor];
+        end
+        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.1);
+    end
+end
+fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
+
+
+%% Step 6. Dense traffic from one file, with a panning camera
+% 300 vehicles on a four-lane road, read from ONE long-format traffic file
+% (id, time, X, Y, yaw, plus a size: a few are trucks drawn as boxes).
+% The camera pans slowly along the road while the ego vehicle drives
+% faster, so the ego enters the view and then leaves it. The selector
+% follows the camera's view: only what the camera sees is drawn, with
+% detail set by distance from the camera.
+trafficFile = fullfile(pwd,'Data','traffic_fourLaneRoad.csv');
+if ~isfile(trafficFile)
+    fcn_INTERNAL_writeDemoTraffic(trafficFile, 300);
+end
+[trafficList, trafficMotions] = fcn_AnimateCar3D_loadTrafficFile(trafficFile, MeshID=priusID);
+carColors = [0.92 0.92 0.92; 0.70 0.71 0.74; 0.12 0.12 0.14; 0.75 0.12 0.10; 0.18 0.30 0.60; 0.45 0.47 0.50];
+for ith_vehicle = 1:numel(trafficList)
+    if ~isnan(trafficList(ith_vehicle).Size(1))
+        trafficList(ith_vehicle).MeshID = 'box';          % trucks: boxes of their own size
+        trafficList(ith_vehicle).Color = [0.85 0.85 0.80];
+    else
+        if mod(ith_vehicle,4)==0
+            trafficList(ith_vehicle).MeshID = vanID;      % every fourth vehicle a van
+        end
+        trafficList(ith_vehicle).Color = carColors(mod(7*ith_vehicle, size(carColors,1))+1,:);
+    end
+end
+egoTime = (0:0.05:15)';
+egoDrive = fcn_INTERNAL_integrateMotion('ego', egoTime, [-10 -1.8 0], 0, @(t) 13+0*t, @(t) 0*t, priusSpec);
+egoRow = fcn_AnimateCar3D_loadSceneList(struct('instance','ego','role','ego','meshID',priusID,'color',[0.05 0.2 0.6]));
+sceneList = [egoRow; trafficList];
+for fieldName = {'WheelSpin','SteerAngle','LightStates'}    % same fields as the ego's motion, to join them
+    [trafficMotions.(fieldName{1})] = deal([]);
+end
+catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoDrive; trafficMotions], StaticScene=staticScene, ...
+    CacheFile=fullfile(tempdir,'AnimateCar3D_demoTrafficCatalog.mat'));
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=55, MiddleDistance=95, FarDistance=170);
+
+figNum = 7;
+figure(figNum); clf;
+set(gcf, 'Position', [100 100 800 450], 'Color', 'w');
+fcn_CarMesh3D_plotScene(GroundExtent=[-150 450 -90 90], GridSpacing=10, FigNum=figNum);
+axis off;
+for laneLineY = [-7.2 -3.6 0 3.6 7.2]
+    line([-150 450], [laneLineY laneLineY], [0.02 0.02], 'Color', [0.95 0.95 0.95], 'LineWidth', 1.5);
+end
+set(gca, 'Projection', 'perspective');
+cameraX = @(t) 20 + 6*t;          % the camera pans at 6 m/s; the ego drives at 13 m/s
+playerState = [];
+selectorState = [];
+gifFile = fullfile(pwd,'Images','traffic_cameraPan.gif');
+gifFrame = 0;
+for ith_step = 1:numel(egoTime)
+    t = egoTime(ith_step);
+    campos([cameraX(t)-30 -42 24]); camtarget([cameraX(t)+25 0 0]); camva(42);
+    [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
+        SelectorState=selectorState, Camera=gca);
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
+    stats = selectorState.Stats;
+    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.1f s: %d candidates; drawn %d near, %d middle, %d boxes', t, ...
+        stats.NumCandidates, stats.NumNear, stats.NumMiddle, stats.NumFar));
+    drawnow;
+    if flag_saveGifs && mod(ith_step-1,3)==0
+        gifFrame = gifFrame + 1;
+        if gifFrame==1
+            firstImage = getframe(gcf);
+            [~, firstColors] = rgb2ind(firstImage.cdata, 40, 'nodither');
+            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
+            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:)];
+        end
+        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.15);
+    end
+end
+fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
+fprintf(1,'Traffic demo: %d vehicles in the file; at the end, %d candidates near the camera\n', ...
+    numel(trafficList), selectorState.Stats.NumCandidates);
+
+
+
+%% Step 7. Live data from a watched folder, with criteria changed while running
+% A live source (here the test helper fcn_AnimateCar3D_writeLiveTestFiles,
+% standing in for a simulator) writes one motion file per vehicle into a
+% folder: each file appears when its vehicle starts, grows as time goes
+% on, and is deleted a second after its vehicle is gone. The animation
+% loop watches the folder (fcn_AnimateCar3D_watchFolder), updates the
+% catalog (fcn_AnimateCar3D_updateCatalog), and draws 1 s behind the
+% newest data. Partway through, a person "edits" displayCriteria.txt in
+% the folder: first all traffic is drawn as boxes, then in detail again
+% (fcn_AnimateCar3D_changeDisplayCriteria). The camera follows the ego.
+liveFolder = fullfile(tempdir, 'AnimateCar3D_liveDemo');
+if isfolder(liveFolder)
+    rmdir(liveFolder, 's');
+end
+mkdir(liveFolder);
+
+% The vehicles: the ego on the middle lane at 12 m/s; oncoming cars on
+% the left lane; faster cars overtaking on the right lane. Each traffic
+% vehicle starts at its own time (its time offset), so its file appears
+% then. An overtaking car starts 35 m behind the ego (behind the camera)
+% and drives long enough to pass the ego and pull far ahead, so it goes
+% from near detail, to the low-detail mesh, to a box, and then out of
+% the drawn region, by its distance from the camera.
+dt = 0.1;
+liveDuration = 22;
+egoLive = fcn_INTERNAL_integrateMotion('ego', (0:dt:liveDuration)', [0 -1.8 0], 0, @(t) 12+0*t, @(t) 0*t, priusSpec);
+randomStream = RandStream('mt19937ar', 'Seed', 7);
+liveRows = struct('instance','ego', 'role','ego', 'meshID',priusID, 'color',[0.05 0.2 0.6], 'timeOffset',0);
+liveMotions = egoLive;
+for ith_car = 1:22
+    flagOncoming = mod(ith_car,2)==1;
+    startTime = 0.6*ith_car - 0.5;
+    if flagOncoming
+        lifeTime = (0:0.2:8)';                  % from 110 m ahead to well behind the camera
+        speed = 11 + 3*rand(randomStream);
+        startPose = [12*startTime + 110, 1.8, pi];
+    else
+        lifeTime = (0:0.2:20)';                 % from 35 m behind to 80 m or more ahead
+        speed = 18 + 2*rand(randomStream);
+        startPose = [12*startTime - 35, -5.4, 0];
+    end
+    pose = [startPose(1) + cos(startPose(3))*speed*lifeTime, startPose(2)*ones(size(lifeTime)), startPose(3)*ones(size(lifeTime))];
+    carName = sprintf('car%02d', ith_car);
+    if mod(ith_car,4)==0
+        carMesh = vanID;
+    else
+        carMesh = priusID;
+    end
+    liveRows(end+1) = struct('instance',carName, 'role','traffic', 'meshID',carMesh, ...
+        'color',carColors(mod(5*ith_car, size(carColors,1))+1,:), 'timeOffset',startTime); %#ok<SAGROW>
+    liveMotions(end+1,1) = struct('Instance',carName, 'Time',lifeTime, 'Pose',pose, 'WheelSpin',[], ...
+        'SteerAngle',[], 'LightStates',[]); %#ok<SAGROW>
+end
+liveList = fcn_AnimateCar3D_loadSceneList(liveRows);
+
+% The display criteria at the start, and the "edits" made while running
+% (Distances are from the camera, which is 22 m behind the ego.)
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=30, MiddleDistance=55, FarDistance=95);
+criteriaFile = fullfile(liveFolder, 'displayCriteria.txt');
+criteriaEdits = {4, ["% All traffic as boxes"; "NearDistance = 1"; "MiddleDistance = 2"], 'edited: all traffic as boxes'; ...
+                 7, ["% Back to detail"; "NearDistance = 30"; "MiddleDistance = 55"], 'edited: traffic in detail again'};
+criteriaNote = 'criteria: as started';
+
+figNum = 8;
+figure(figNum); clf;
+set(gcf, 'Position', [100 100 800 450], 'Color', 'w');
+fcn_CarMesh3D_plotScene(GroundExtent=[-60 420 -40 40], GridSpacing=10, FigNum=figNum);
+axis off;
+for laneLineY = [-7.2 -3.6 0 3.6]
+    line([-60 420], [laneLineY laneLineY], [0.02 0.02], 'Color', [0.95 0.95 0.95], 'LineWidth', 1.5);
+end
+set(gca, 'Projection', 'perspective');
+camva(40);
+
+displayDelay = 1;       % draw 1 s behind the newest data
+liveState = [];
+watchState = [];
+catalog = [];
+playerState = [];
+selectorState = [];
+checkSeconds = [];
+gifFile = fullfile(pwd,'Images','live_watchedFolder.gif');
+gifFrame = 0;
+writerTimes = (0:dt:liveDuration)';
+for ith_step = 1:numel(writerTimes)
+    writerTime = writerTimes(ith_step);
+
+    % The live source writes up to now, and a person edits the criteria
+    liveState = fcn_AnimateCar3D_writeLiveTestFiles(liveFolder, liveList, liveMotions, writerTime, ...
+        LiveState=liveState, DeleteAfter=1);
+    for ith_edit = 1:size(criteriaEdits,1)
+        if abs(writerTime - criteriaEdits{ith_edit,1}) < dt/2
+            writelines(criteriaEdits{ith_edit,2}, criteriaFile);
+            criteriaNote = criteriaEdits{ith_edit,3};
+        end
+    end
+
+    % Watch the folder every 0.5 s (of scene time, here; a live loop
+    % would use MinInterval, in clock time, instead of Force)
+    flagCheckNow = mod(ith_step-1, round(0.5/dt))==0;
+    [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState, ...
+        DefaultMeshID=priusID, MinInterval=Inf, Force=flagCheckNow);
+    if update.Checked
+        checkTimer = tic;
+        [catalog, ~, selectorState] = fcn_AnimateCar3D_updateCatalog(catalog, Add=update.Add, ...
+            Motions=update.Motions, Remove=update.Remove, SelectorState=selectorState);
+        if ~isempty(update.CriteriaFile)
+            criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, update.CriteriaFile, OnError='warn');
+        end
+        checkSeconds(end+1) = update.CheckSeconds + toc(checkTimer); %#ok<SAGROW>
+    end
+
+    % Draw, 1 s behind the newest data; the camera follows the ego
+    showTime = writerTime - displayDelay;
+    if showTime < 0 || isempty(catalog) || showTime > update.LatestTime
+        continue;
+    end
+    egoIndex = find(strcmp({catalog.Objects.Instance}, 'ego'), 1);
+    egoState = fcn_AnimateCar3D_getObjectState(catalog, egoIndex, showTime, Detail='pose', FigNum=-1);
+    egoXY = egoState.Pose(1:2);
+    campos([egoXY(1)-22, egoXY(2)-16, 10]);
+    camtarget([egoXY(1)+18, egoXY(2)+1, 0]);
+    [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, showTime, criteria, ...
+        SelectorState=selectorState, Camera=gca);
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
+    stats = selectorState.Stats;
+    fcn_INTERNAL_setCaption(gcf, {sprintf('showing t = %.1f s; newest data %.1f s; %d files in the folder', showTime, update.LatestTime, ...
+        update.NumInstances), sprintf('%s: %d near, %d middle, %d boxes', criteriaNote, stats.NumNear, ...
+        stats.NumMiddle, stats.NumFar)});
+    drawnow;
+    if flag_saveGifs && mod(ith_step-1,2)==0
+        gifFrame = gifFrame + 1;
+        if gifFrame==1
+            firstImage = getframe(gcf);
+            [~, firstColors] = rgb2ind(firstImage.cdata, 40, 'nodither');
+            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
+            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:)];
+        end
+        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.2);
+    end
+end
+fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
+fprintf(1,'Live demo: %d folder checks; watch + catalog update took %.0f ms on average (%.0f ms at most)\n', ...
+    numel(checkSeconds), 1000*mean(checkSeconds), 1000*max(checkSeconds));
+rmdir(liveFolder, 's');
+
+
+
+%% Step 8. Pedestrians and a moving item: a crosswalk and a parking gate
+% Simple shapes (fcn_AnimateCar3D_fillSimpleShape) for objects that have
+% no vehicle mesh. Seven pedestrians (role 'pedestrian', shape
+% 'pedestrian') cross the road; the ego stops for them, then drives on to
+% a parking gate (role 'movingItem', shape 'bar'), whose arm rises as the
+% ego comes near: its pitch changes over time. Posts along the sidewalks
+% are static cylinders. Simple shapes are drawn with the far boxes, all in
+% one patch, so a crowd costs little.
+dt = 0.1;
+egoSpeed = @(t) 10*(t<1.5) + max(0, 10-(10/3)*(t-1.5)).*(t>=1.5 & t<4.5) + ...
+    min(10, 2.5*max(0,t-6.5)).*(t>=6.5);
+egoGate = fcn_INTERNAL_integrateMotion('ego', (0:dt:16)', [0 -1.8 0], 0, egoSpeed, @(t) 0*t, priusSpec);
+
+% The pedestrians: from the south sidewalk to the north one (and one the
+% other way), each starting at its own time
+walkerColors = [0.80 0.20 0.20; 0.20 0.55 0.25; 0.95 0.75 0.10; 0.45 0.25 0.65; 0.10 0.45 0.75; 0.90 0.45 0.15; 0.30 0.30 0.30];
+walkerStarts = [0 0.4 0.9 1.3 1.6 2.0 0.2];
+walkerX = [36.4 37.6 36.9 38.2 37.2 36.6 38.0];
+gateRows = struct('instance','ego', 'role','ego', 'meshID',priusID, 'color',[0.05 0.2 0.6], 'timeOffset',0, 'height',NaN);
+gateMotions = struct('Instance','ego', 'Time',egoGate.Time, 'Pose',egoGate.Pose, 'WheelSpin',egoGate.WheelSpin, ...
+    'SteerAngle',egoGate.SteerAngle, 'LightStates',egoGate.LightStates);
+for ith_walker = 1:numel(walkerStarts)
+    walkTime = (0:0.2:8.5)';
+    if ith_walker < numel(walkerStarts)
+        walkY = -6.3 + 1.5*walkTime;   heading = pi/2;     % south to north
+    else
+        walkY = 6.3 - 1.4*walkTime;    heading = -pi/2;    % north to south
+    end
+    walkerName = sprintf('walker%d', ith_walker);
+    gateRows(end+1) = struct('instance',walkerName, 'role','pedestrian', 'meshID','pedestrian', ...
+        'color',walkerColors(ith_walker,:), 'timeOffset',walkerStarts(ith_walker), 'height',1.6+0.1*mod(ith_walker,3)); %#ok<SAGROW>
+    gateMotions(end+1,1) = struct('Instance',walkerName, 'Time',walkTime, ...
+        'Pose',[walkerX(ith_walker)*ones(size(walkTime)), walkY, heading*ones(size(walkTime))], ...
+        'WheelSpin',[], 'SteerAngle',[], 'LightStates',[]); %#ok<SAGROW>
+end
+
+% The gate arm: on a post at the south edge of the ego's lane, pointing
+% across it (yaw pi/2), 1 m up; its pitch goes from 0 to -1.45 rad (up)
+% between 11.2 and 12.6 s
+gateTime = (0:0.2:16)';
+gatePitch = -1.45*min(1, max(0, (gateTime-11.2)/1.4));
+gateRows(end+1) = struct('instance','gate', 'role','movingItem', 'meshID','bar', 'color',[0.95 0.85 0.10], ...
+    'timeOffset',0, 'height',NaN);
+gateMotions(end+1,1) = struct('Instance','gate', 'Time',gateTime, ...
+    'Pose',[85*ones(size(gateTime)), -4.0*ones(size(gateTime)), ones(size(gateTime)), zeros(size(gateTime)), gatePitch, (pi/2)*ones(size(gateTime))], ...
+    'WheelSpin',[], 'SteerAngle',[], 'LightStates',[]);
+gateList = fcn_AnimateCar3D_loadSceneList(gateRows);
+
+% Static: posts along both sidewalks, the gate's post, and two buildings
+postX = [0:6:30, 46:6:80];
+staticRows = struct('x', num2cell([postX, postX, 85, 20, 70]), ...
+    'y', num2cell([-4.4*ones(size(postX)), 4.4*ones(size(postX)), -4.0, 16, 17]), ...
+    'meshID', [repmat({'cylinder'}, 1, 2*numel(postX)+1), {'box','box'}], ...
+    'length', num2cell([0.25*ones(1,2*numel(postX)), 0.3, 24, 30]), ...
+    'width', num2cell([0.25*ones(1,2*numel(postX)), 0.3, 12, 14]), ...
+    'height', num2cell([0.9*ones(1,2*numel(postX)), 1.1, 9, 6]), ...
+    'color', [repmat({'0.35 0.35 0.38'}, 1, 2*numel(postX)+1), {'0.75 0.70 0.62','0.62 0.66 0.72'}]);
+gateStatic = fcn_AnimateCar3D_loadStaticScene(staticRows);
+meshSet = fcn_AnimateCar3D_loadMeshes({'pedestrian','bar','cylinder'}, MeshSet=meshSet);
+catalog = fcn_AnimateCar3D_buildCatalog(gateList, Motions=gateMotions, StaticScene=gateStatic);
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=120, MiddleDistance=150, FarDistance=200);
+
+figNum = 9;
+figure(figNum); clf;
+set(gcf, 'Position', [100 100 800 450], 'Color', 'w');
+fcn_CarMesh3D_plotScene(GroundExtent=[-20 120 -30 30], GridSpacing=10, FigNum=figNum);
+axis off;
+patch([-20 120 120 -20], [-3.6 -3.6 3.6 3.6], 0.01*[1 1 1 1], [0.35 0.36 0.38], 'EdgeColor','none');   % the road
+line([-20 120], [0 0], [0.02 0.02], 'Color', [0.95 0.85 0.3], 'LineWidth', 1.5);
+for stripeY = -3.2:0.8:3.2
+    patch([35.5 39 39 35.5], stripeY + [-0.2 -0.2 0.2 0.2], 0.02*[1 1 1 1], [0.95 0.95 0.95], 'EdgeColor','none');
+end
+set(gca, 'Projection', 'perspective');
+camva(40);
+egoIndex = find(strcmp({catalog.Objects.Instance}, 'ego'), 1);
+timeSteps = (0:dt:16)';
+playerState = [];
+selectorState = [];
+gifFile = fullfile(pwd,'Images','pedestrians_crosswalkGate.gif');
+gifFrame = 0;
+for ith_step = 1:numel(timeSteps)
+    t = timeSteps(ith_step);
+    egoState = fcn_AnimateCar3D_getObjectState(catalog, egoIndex, t, Detail='pose', FigNum=-1);
+    campos([egoState.Pose(1)-6, -21, 8]); camtarget([egoState.Pose(1)+13, 1, 0.5]);   % follow the ego
+    [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
+        SelectorState=selectorState, Camera=gca);
+    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
+    numWalkers = sum(strcmp(displayList.Boxes.MeshID, 'pedestrian'));
+    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.1f s: %d pedestrians; ego speed %.1f m/s; gate arm at %.0f deg', ...
+        t, numWalkers, egoSpeed(t), -rad2deg(interp1(gateTime, gatePitch, min(t, gateTime(end))))));
+    drawnow;
+    if flag_saveGifs && mod(ith_step-1,2)==0
+        gifFrame = gifFrame + 1;
+        if gifFrame==1
+            firstImage = getframe(gcf);
+            [~, firstColors] = rgb2ind(firstImage.cdata, 30, 'nodither');
+            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
+            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:); walkerColors];   % at most 256 colors
+        end
+        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.2);
+    end
+end
+fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
+
+
 
 %% Functions follow
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -238,6 +676,72 @@ fprintf(1,'Branching demo: %d steps; %d vehicles drawn new, %d reused (the ego''
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%§
+
+%% fcn_INTERNAL_integrateMotion
+function motion = fcn_INTERNAL_integrateMotion(instanceName, timeSteps, startPose, startSpin, speedFunction, curvatureFunction, vehicleSpec)
+% A simple kinematic motion: the rear axle follows speed(t) and
+% curvature(t) from startPose; tires roll without slipping; the front
+% tires steer by Ackermann; brake lights are on while slowing
+timeSteps = timeSteps(:);
+speed = speedFunction(timeSteps);
+curvature = curvatureFunction(timeSteps);
+stepDistance = [0; (speed(2:end)+speed(1:end-1))/2 .* diff(timeSteps)];
+yaw = startPose(3) + cumsum(stepDistance .* [curvature(1); (curvature(2:end)+curvature(1:end-1))/2]);
+meanYaw = [yaw(1); (yaw(2:end)+yaw(1:end-1))/2];
+x = startPose(1) + cumsum(stepDistance.*cos(meanYaw));
+y = startPose(2) + cumsum(stepDistance.*sin(meanYaw));
+wheelSpin = startSpin + repmat(cumsum(stepDistance)/(vehicleSpec.TireDiameter/2), 1, 4);
+steerAngle = fcn_CarMesh3D_calcAckermannSteering(atan(vehicleSpec.Wheelbase*curvature), vehicleSpec.Wheelbase, ...
+    vehicleSpec.TrackFront, FigNum=-1);
+flagBraking = [diff(speed); 0] < -1e-6;
+lightStates = repmat(struct('Headlights','low', 'TurnLeft',false, 'TurnRight',false, 'Running',false, ...
+    'Tail','on', 'Backup',false), numel(timeSteps), 1);
+[lightStates(flagBraking).Tail] = deal('brake');
+motion = struct('Instance',instanceName, 'Time',timeSteps, 'Pose',[x y yaw], 'WheelSpin',wheelSpin, ...
+    'SteerAngle',steerAngle, 'LightStates',lightStates);
+end % Ends fcn_INTERNAL_integrateMotion
+
+%% fcn_INTERNAL_writeDemoTraffic
+function fcn_INTERNAL_writeDemoTraffic(fileName, Nvehicles)
+% Writes the demo traffic file: Nvehicles on three lanes of a four-lane
+% road (the ego's lane, y = -1.8, is left free), 15 s at 2 Hz, in long
+% format; about one in eight is a truck (with a size)
+randomStream = RandStream('mt19937ar', 'Seed', 2026);
+laneY = [-5.4 1.8 5.4];
+direction = [1 -1 -1];
+timeSteps = (0:0.5:15)';
+rows = cell(Nvehicles,1);
+for ith_vehicle = 1:Nvehicles
+    lane = randi(randomStream, 3);
+    startX = -150 + 600*rand(randomStream);
+    speed = 8 + 7*rand(randomStream);
+    x = startX + direction(lane)*speed*timeSteps;
+    yaw = (direction(lane)<0)*pi*ones(size(timeSteps));
+    if rand(randomStream) < 0.125
+        vehicleSize = repmat([12 2.5 3.8], numel(timeSteps), 1);
+    else
+        vehicleSize = nan(numel(timeSteps), 3);
+    end
+    rows{ith_vehicle} = [ith_vehicle*ones(size(timeSteps)), timeSteps, x, laneY(lane)*ones(size(timeSteps)), yaw, vehicleSize];
+end
+allRows = vertcat(rows{:});
+trafficTable = array2table(allRows, 'VariableNames', {'id','time','X','Y','yaw','length','width','height'});
+writetable(trafficTable, fileName);
+end % Ends fcn_INTERNAL_writeDemoTraffic
+
+%% fcn_INTERNAL_setCaption
+function fcn_INTERNAL_setCaption(figureHandle, captionText)
+% A caption at the top of the figure. (An axes title can fall outside the
+% figure when the camera is placed by hand, as in these animations.)
+caption = findall(figureHandle, 'Type','textboxshape', 'Tag','AnimateCar3D caption');
+if isempty(caption)
+    annotation(figureHandle, 'textbox', [0 0.88 1 0.12], 'String', captionText, 'Tag', 'AnimateCar3D caption', ...
+        'EdgeColor','none', 'HorizontalAlignment','center', 'VerticalAlignment','middle', 'FontSize', 11, ...
+        'Interpreter','none');
+else
+    set(caption(1), 'String', captionText);
+end
+end % Ends fcn_INTERNAL_setCaption
 
 %% fcn_INTERNAL_saveGifFrameFixedColors
 function fcn_INTERNAL_saveGifFrameFixedColors(figureHandle, fileName, frameNumber, colorMap, delayTime)

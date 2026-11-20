@@ -14,6 +14,10 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %   'far'     a box of the vehicle's size; all far boxes are drawn as one
 %             object, so thousands cost little
 %
+% Simple shapes ('box', 'bar', 'cylinder', 'pedestrian'; see
+% fcn_AnimateCar3D_fillSimpleShape) have no mesh, so they are always
+% 'far': they are drawn with the far boxes, each in its own shape.
+%
 % FORMAT:
 %
 %       displayList = fcn_AnimateCar3D_fillDisplayList(...
@@ -44,6 +48,7 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
 %      Tier: 'near' (default), 'middle', or 'far': one for all, or N.
+%      Simple shapes ('box', 'pedestrian', ...) are always 'far'.
 %
 %      Time: the time of this step, in seconds. Default 0.
 %
@@ -86,7 +91,7 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %
 % DEPENDENCIES:
 %
-%      (none)
+%      fcn_AnimateCar3D_fillSimpleShape
 %
 % EXAMPLES:
 %
@@ -282,6 +287,10 @@ N = numel(instanceNames);
 % Expand the "one for all" inputs to N rows, and fill defaults
 meshIDs = fcn_INTERNAL_expandCell(options.MeshID, N);
 tiers = fcn_INTERNAL_expandCell(options.Tier, N);
+[~, simpleIDs] = fcn_AnimateCar3D_fillSimpleShape('', FigNum=-1);
+flagSimple = ismember(lower(meshIDs), simpleIDs);
+meshIDs(flagSimple) = lower(meshIDs(flagSimple));
+tiers(flagSimple) = {'far'};          % simple shapes have no mesh: always drawn the far way
 poses = options.Pose;
 if size(poses,2)==3
     poses = [poses(:,1:2), zeros(N,3), poses(:,3)];
