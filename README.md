@@ -24,6 +24,26 @@ AnimateCar3D builds on [CarMesh3D](https://github.com/ivsg-psu/VehicleSimulation
 
 ## Getting started
 
+### Start with the examples
+
+`script_examples_AnimateCar3D.m` has the simplest examples first, each one call to fill a scenario and one call to play it:
+
+```matlab
+scenario = fcn_AnimateCar3D_fillExampleScenario('laneChange');   % a scene, its centerline options, and the motions
+fcn_AnimateCar3D_playScenario(scenario);                          % the whole animation loop, with a following camera
+```
+
+| Example | What happens | GIF |
+|---|---|---|
+| 1. `'laneChange'` | One vehicle on the two-lane road changes to the left lane at a constant 15 m/s, signaling first | `Images/example1_laneChange.gif` |
+| 2. `'curvyConstantSpeed'` | One vehicle follows the curvy road's lane at a constant 12 m/s; the front tires steer with the curves | `Images/example2_curvyConstantSpeed.gif` |
+| 3. `'curvyVaryingSpeed'` | The same path, slowing for each curve (no more than 2 m/s^2 sideways), with brake lights, and speeding up on the straights | `Images/example3_curvyVaryingSpeed.gif` |
+
+![Example 1](Images/example1_laneChange.gif) ![Example 3](Images/example3_curvyVaryingSpeed.gif)
+
+`fcn_AnimateCar3D_fillExampleScenario()` with no inputs lists the examples. To build your own: `fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=...)` turns any path (for example, a lane centerline from the scene's centerline options) and a speed (a value, one per point, or a function of distance) into a full motion: pose, wheel spin, Ackermann steering, and brake lights. Examples with several objects (passing, following, stopping for a pedestrian at a crosswalk) come next.
+
+
 1. Put this folder somewhere whose path has **no minus signs**.
 2. Open MATLAB (written for R2025b) and run `script_demo_AnimateCar3D.m` from this folder.
 3. The first run, while online, installs its dependencies (DebugTools and CarMesh3D) into the `Utilities` folder, which git ignores.
@@ -726,12 +746,11 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 ### To-Do
 
-1. **Example scenarios, simplest first.** Each is a road (above), a scene list, and motions, small enough to read in a minute; they come first in the demos.
-   - *One vehicle, one maneuver (all defaults):* a lane change at constant speed on the two-lane road; following the curvy road at constant speed; following the curvy road with changing speed.
-   - *Then several objects:* one car passing another; a car following another; a car stopping for a pedestrian at a crosswalk.
+1. **Example scenarios with several objects:** passing, following, and stopping for a pedestrian at a crosswalk (the single-vehicle examples are done: see [Start with the examples](#start-with-the-examples)).
 2. **Cross streets for the urban scene**, from the intersection prototype; centerline options through more than one junction.
 3. **A time option for `fcn_AnimateCar3D_playLive`** (optional input): a target frame rate, and how the data's time is tied to the clock: (a) **exactly**, the time in the data matches the clock (for example, both in seconds since the start of the run, or both clock times); or (b) **relative**, one second of clock time moves the animation one second on, from wherever it starts. Today it draws as fast as it can, with the shown time moving at `PlaybackSpeed` with the clock, which is close to (b).
 **Done recently** (2026_11_20)
+- The first example scenarios (one vehicle, one maneuver): `script_examples_AnimateCar3D.m`, `fcn_AnimateCar3D_fillExampleScenario`, `fcn_AnimateCar3D_playScenario` (one call plays a scenario held in memory), and `fcn_AnimateCar3D_fillPathMotion` (a motion from a path and a speed).
 - Centerline options: a fixed start in every scene (`EgoStart`), junction connections (turning paths), and `fcn_AnimateCar3D_fillCenterlineOptions` (also `fcn_AnimateCar3D_fillRoad`'s second output).
 - A road prototype laid out like ASAM OpenDRIVE (with an intersection in two lane layouts, and pedestrians standing on sidewalks): `fcn_AnimateCar3D_fillRoad`, `fcn_AnimateCar3D_getRoadPoints`, `fcn_AnimateCar3D_plotRoad`, with presets for the two-lane, curvy, interstate, and urban scenes (see [Roads and simple scenes](#roads-and-simple-scenes-prototype)).
 - Reading only the new rows of grown files in `fcn_AnimateCar3D_watchFolder`, and handling replaced and deleted files (see [Live use](#live-use-step-3)).
@@ -743,7 +762,7 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 - Trails that fade with age (path lines).
 - **Simple road assets** to place in scenes: trees, stop signs, curbs, simple buildings, and so on. They may go into their own repository (RoadAssetPlotting, say), once the CarMesh3D work is finished, since they should follow CarMesh3D's structure and workflow (a folder per asset, a standard script, standard checks). For now, AnimateCar3D's simple shapes (boxes, bars, cylinders, pedestrians) stand in.
-- **A scenario-building function:** the demos' simple motion maker (`fcn_INTERNAL_integrateMotion`: speed and curvature over time, with brake lights) could become a function for building scenarios, that is, how each object moves over time.
+- **A scenario-building function**, beyond `fcn_AnimateCar3D_fillPathMotion` (which now makes a motion from a path and a speed): building whole scenarios (several objects, timing, interactions).
 - **Limiting the levels used by separately drawn vehicles** (every other level, say), since a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Reconsider if a scene has many vehicles switching levels at once (for example, a camera moving fast).
 
 ### Changes wanted in CarMesh3D

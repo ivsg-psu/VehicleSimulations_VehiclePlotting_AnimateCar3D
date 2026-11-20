@@ -126,6 +126,7 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 disp('Welcome to the demo code for the AnimateCar3D library!')
+disp('(New to AnimateCar3D? Start with script_examples_AnimateCar3D.m: the simplest examples, one call each.)')
 fprintf(1,'Using CarMesh3D from: %s\n', carMesh3DRoot);
 
 % Save the demo animations as GIFs in the Images folder? (1 = yes)
