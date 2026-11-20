@@ -264,28 +264,32 @@ The selector returns its state for the next step: each drawn object's tier and l
 
 ## Live use (step 3)
 
-In live use, the scene is not known in advance: a simulator (or a vehicle) writes data into a **watched folder** while the animation runs. Each step, the animation loop asks the watcher what changed, updates the catalog with only that, and draws a little behind the newest data:
+In live use, the scene is not known in advance: a simulator (or a vehicle) writes data into a **watched folder** while the animation runs. One function runs the whole live loop, `fcn_AnimateCar3D_playLive`:
 
 ```matlab
 liveFolder = 'C:\myRun\live';
-meshSet  = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','box','pedestrian'});
-criteria = fcn_AnimateCar3D_fillDisplayCriteria();
-catalog = [];  watchState = [];  selectorState = [];  playerState = [];
-fcn_CarMesh3D_plotScene(GroundExtent=[-100 300 -80 80], FigNum=1);
-while true
-    [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState);   % at most once a second
-    if update.Checked
-        [catalog, ~, selectorState] = fcn_AnimateCar3D_updateCatalog(catalog, Add=update.Add, ...
-            Motions=update.Motions, Remove=update.Remove, SelectorState=selectorState);
-        if ~isempty(update.CriteriaFile)     % someone edited displayCriteria.txt
-            criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, update.CriteriaFile, OnError='warn');
-        end
-    end
-    t = update.LatestTime - 1;               % draw 1 s behind the newest data
-    if isempty(catalog) || t < 0, pause(0.1); continue; end
-    % ... set the camera, then select and play as in step 2 ...
-end
+meshSet = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','box','pedestrian'});
+fcn_AnimateCar3D_playLive(liveFolder, meshSet, GifFile='myRun.gif');   % runs until no new data comes for 10 s
 ```
+
+Each step, it watches the folder (at most once a second), updates the catalog with only what changed, applies any edit to `displayCriteria.txt`, loads the meshes of new mesh IDs, points a CarMesh3D camera at the object it follows, selects, draws, writes a caption, and saves a GIF frame. The time shown moves with the clock and stays `DisplayDelay` (1 s) behind the newest data, so the picture moves smoothly although data arrives in bursts. If the figure is empty, a ground is drawn first; to use your own scene, draw it before the call. A mesh ID that appears later is loaded then; if it cannot be loaded (a misspelled ID, say), a warning is given once and its objects are drawn as boxes of their size.
+
+| Option | Default | What it does |
+|---|---|---|
+| `Steps` | `Inf` | `Inf`: run until done. `1`: one step per call, for a script with its own loop (pass `LiveState=liveState` back each time) |
+| `StopAfter`, `MaxSeconds` | 10, `Inf` | Stop after this many seconds with no new data (once caught up), or in all. Closing the figure also stops it. `StopAfter=Inf` keeps the animation open however long no data comes (field data collection); while nothing changes, the picture is not redrawn |
+| `DisplayDelay`, `PlaybackSpeed` | 1, 1 | How far behind the newest data to stay; scene seconds per clock second |
+| `ShowTime` | `[]` | The time to show at this step, in place of the clock (scripted playback, tests) |
+| `CheckInterval`, `ForceCheck` | 1, `false` | Seconds between folder checks; check at every step |
+| `Criteria`, `DefaultMeshID` | defaults, first mesh | The criteria to start with; the mesh of objects whose files do not name one |
+| `CameraSettings`, `CameraFollow` | `'kite'`, `'ego'` | A camera from `fcn_CarMesh3D_fillCameraSettings` (`[]` leaves the camera alone), and the instance it follows |
+| `Caption` | `true` | `true`, `false`, or extra text below the standard caption |
+| `GifFile`, `GifEvery`, `GifDelay` | `''`, 1, 0.1 | GIF frames, with one fixed color map |
+| `Action` | `'play'` | `'clear'` deletes the drawn graphics |
+
+The output `liveState` holds the catalog, criteria, mesh set, the watcher's, selector's, and player's states, and `Done`/`DoneReason` and `Stats`.
+
+Underneath, `fcn_AnimateCar3D_playLive` uses these functions, which can also be called directly to write your own loop (see the function's code, or demo step 7 before 2026_11_20):
 
 | Function | What it does |
 |---|---|
@@ -309,7 +313,7 @@ end
 
 **Speed.** Growing 200 cars by 1 s each updates the catalog in about 0.12 s. In the live demo (23 vehicles, checked every 0.5 s), each check and catalog update took about 0.12 s on average.
 
-**The live demo** (`script_demo_AnimateCar3D.m`, step 7): the test helper writes an ego vehicle and 22 traffic vehicles into a temporary folder, one file per vehicle; each file appears when its vehicle starts and is deleted 1 s after it ends. Oncoming cars come from 110 m ahead and pass behind the camera. Overtaking cars start 35 m behind the ego (behind the camera), pass it, and pull ahead: each is drawn near, then with ever coarser reduced meshes as it shrinks on screen (separately, then merged), and is no longer drawn once it is beyond `MaxDistance` (150 m) from the camera. The loop checks the folder every 0.5 s and draws 1 s behind the newest data, with the camera following the ego. At 4 s, `displayCriteria.txt` is "edited" so that all traffic is merged (`TopScreenSize = 10000`, `MergeBelowSize = 10000`: each vehicle at its detail level, in one patch), and at 7 s back to the defaults. The caption shows the time drawn, the newest data, the files in the folder, and the tiers.
+**The live demo** (`script_demo_AnimateCar3D.m`, step 7): the test helper writes an ego vehicle and 22 traffic vehicles into a temporary folder, one file per vehicle; each file appears when its vehicle starts and is deleted 1 s after it ends. Oncoming cars come from 110 m ahead and pass behind the camera. Overtaking cars start 35 m behind the ego (behind the camera), pass it, and pull ahead: each is drawn near, then with ever coarser reduced meshes as it shrinks on screen (separately, then merged), and is no longer drawn once it is beyond `MaxDistance` (150 m) from the camera. The loop is `fcn_AnimateCar3D_playLive`, one step per call (the data is written in the same loop): it checks the folder every 0.5 s and draws 1 s behind the newest data, with a 'kite' camera following the ego. At 4 s, `displayCriteria.txt` is "edited" so that all traffic is merged (`TopScreenSize = 10000`, `MergeBelowSize = 10000`: each vehicle at its detail level, in one patch), and at 7 s back to the defaults. The caption shows the time drawn, the newest data, the number of objects, the tiers, and which criteria are in use.
 
 (In the first version of this demo, the overtaking cars' motions lasted only 8 s and ended just before they reached the ego, so they vanished beside it: an object no longer exists after its last time. That was the demo's traffic, not the selector.)
 
@@ -652,10 +656,11 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 ### To-Do
 
-1. **A live-loop function** (`fcn_AnimateCar3D_playLive`, say) for the loop in [Live use](#live-use-step-3): watch the folder, update the catalog, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
+1. **A target frame rate for `fcn_AnimateCar3D_playLive`:** an optional input (`TargetFrameRate`, say) to pace the run mode; it now draws as fast as it can.
 2. **Incremental reading in `fcn_AnimateCar3D_watchFolder`:** it reads a grown file whole at each check; for long runs it should read only the new rows.
 3. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
 **Done recently** (2026_11_20)
+- A live-loop function, `fcn_AnimateCar3D_playLive`: the whole live loop in one call (or one step per call), with a CarMesh3D camera, caption, and GIF frames. See [Live use](#live-use-step-3); demo step 7 now uses it.
 - Path lines (step 6): the selector lists them, the player draws them; trails and previews, color policies, your own colors and markers, screen lines or ribbons. See [Path lines](#path-lines-step-6).
 - Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog` and `fcn_AnimateCar3D_updateCatalog`, each motion with only its own fields, checked against a documented motion template (returned or printed by `fcn_AnimateCar3D_buildCatalog()` with no inputs). See [Input files](#input-files).
 

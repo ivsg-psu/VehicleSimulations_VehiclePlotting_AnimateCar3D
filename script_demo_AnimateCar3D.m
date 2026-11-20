@@ -480,25 +480,32 @@ axis off;
 for laneLineY = [-7.2 -3.6 0 3.6]
     line([-60 420], [laneLineY laneLineY], [0.02 0.02], 'Color', [0.95 0.95 0.95], 'LineWidth', 1.5);
 end
-set(gca, 'Projection', 'perspective');
-camva(40);
 
-displayDelay = 1;       % draw 1 s behind the newest data
-liveState = [];
-watchState = [];
-catalog = [];
-playerState = [];
-selectorState = [];
-checkSeconds = [];
-gifFile = fullfile(pwd,'Images','live_watchedFolder.gif');
-gifFrame = 0;
+% The live loop is one function, fcn_AnimateCar3D_playLive: it watches
+% the folder, updates the catalog and the criteria, points the camera
+% (a CarMesh3D 'kite' camera, moved back and to the side), selects,
+% draws, and saves GIF frames. Here the data is written in the same loop,
+% so it takes one step per call (Steps=1) and is told the time to show (1
+% s behind the newest data). A program writing the folder on its own
+% needs only one call, which runs until no new data comes:
+%       fcn_AnimateCar3D_playLive(liveFolder, meshSet, Criteria=criteria);
+cameraSettings = fcn_CarMesh3D_fillCameraSettings(Mode='kite', Position=[-22 -16 10], Target=[18 1 0], FieldOfView=40);
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd,'Images','live_watchedFolder.gif');
+    if isfile(gifFile)
+        delete(gifFile);
+    end
+end
+writerState = [];
+playState = [];
 writerTimes = (0:dt:liveDuration)';
 for ith_step = 1:numel(writerTimes)
     writerTime = writerTimes(ith_step);
 
     % The live source writes up to now, and a person edits the criteria
-    liveState = fcn_AnimateCar3D_writeLiveTestFiles(liveFolder, liveList, liveMotions, writerTime, ...
-        LiveState=liveState, DeleteAfter=1);
+    writerState = fcn_AnimateCar3D_writeLiveTestFiles(liveFolder, liveList, liveMotions, writerTime, ...
+        LiveState=writerState, DeleteAfter=1);
     for ith_edit = 1:size(criteriaEdits,1)
         if abs(writerTime - criteriaEdits{ith_edit,1}) < dt/2
             writelines(criteriaEdits{ith_edit,2}, criteriaFile);
@@ -506,53 +513,17 @@ for ith_step = 1:numel(writerTimes)
         end
     end
 
-    % Watch the folder every 0.5 s (of scene time, here; a live loop
-    % would use MinInterval, in clock time, instead of Force)
-    flagCheckNow = mod(ith_step-1, round(0.5/dt))==0;
-    [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState, ...
-        DefaultMeshID=priusID, MinInterval=Inf, Force=flagCheckNow);
-    if update.Checked
-        checkTimer = tic;
-        [catalog, ~, selectorState] = fcn_AnimateCar3D_updateCatalog(catalog, Add=update.Add, ...
-            Motions=update.Motions, Remove=update.Remove, SelectorState=selectorState);
-        if ~isempty(update.CriteriaFile)
-            criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, update.CriteriaFile, OnError='warn');
-        end
-        checkSeconds(end+1) = update.CheckSeconds + toc(checkTimer); %#ok<SAGROW>
-    end
-
-    % Draw, 1 s behind the newest data; the camera follows the ego
-    showTime = writerTime - displayDelay;
-    if showTime < 0 || isempty(catalog) || showTime > update.LatestTime
-        continue;
-    end
-    egoIndex = find(strcmp({catalog.Objects.Instance}, 'ego'), 1);
-    egoState = fcn_AnimateCar3D_getObjectState(catalog, egoIndex, showTime, Detail='pose', FigNum=-1);
-    egoXY = egoState.Pose(1:2);
-    campos([egoXY(1)-22, egoXY(2)-16, 10]);
-    camtarget([egoXY(1)+18, egoXY(2)+1, 0]);
-    [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, showTime, criteria, ...
-        SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
-    playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
-    stats = selectorState.Stats;
-    fcn_INTERNAL_setCaption(gcf, {sprintf('showing t = %.1f s; newest data %.1f s; %d files in the folder', showTime, update.LatestTime, ...
-        update.NumInstances), sprintf('%s: %d near, %d middle, %d far (merged)', criteriaNote, stats.NumNear, ...
-        stats.NumMiddle, stats.NumFar)});
-    drawnow;
-    if flag_saveGifs && mod(ith_step-1,2)==0
-        gifFrame = gifFrame + 1;
-        if gifFrame==1
-            firstImage = getframe(gcf);
-            [~, firstColors] = rgb2ind(firstImage.cdata, 40, 'nodither');
-            [cubeR, cubeG, cubeB] = ndgrid(linspace(0,1,6));
-            gifColorMap = [firstColors; cubeR(:) cubeG(:) cubeB(:)];
-        end
-        fcn_INTERNAL_saveGifFrameFixedColors(gcf, gifFile, gifFrame, gifColorMap, 0.2);
-    end
+    % One step: check the folder every 0.5 s of scene time (a live run
+    % would use CheckInterval, in clock time), show 1 s behind the data
+    playState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, LiveState=playState, Steps=1, ...
+        Criteria=criteria, DefaultMeshID=priusID, CheckInterval=Inf, ForceCheck=mod(ith_step-1, round(0.5/dt))==0, ...
+        ShowTime=writerTime-1, CameraSettings=cameraSettings, Caption=criteriaNote, ...
+        GifFile=gifFile, GifEvery=2, GifDelay=0.2, FigNum=figNum);
 end
-fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
-fprintf(1,'Live demo: %d folder checks; watch + catalog update took %.0f ms on average (%.0f ms at most)\n', ...
-    numel(checkSeconds), 1000*mean(checkSeconds), 1000*max(checkSeconds));
+playState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, LiveState=playState, Action='clear');
+fprintf(1,'Live demo: %d steps (%d drawn), %d folder checks, %d criteria changes; %.0f ms per step on average\n', ...
+    playState.Stats.Steps, playState.Stats.StepsDrawn, playState.Stats.Checks, playState.Stats.CriteriaChanges, ...
+    1000*playState.Stats.StepSeconds);
 rmdir(liveFolder, 's');
 
 
