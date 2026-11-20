@@ -11,7 +11,7 @@ function [criteria, changedNames] = fcn_AnimateCar3D_changeDisplayCriteria(crite
 % with % or # are comments, and blank lines are skipped. Names are those
 % of fcn_AnimateCar3D_fillDisplayCriteria. Values are written as:
 %
-%   numbers         FarDistance = 150      BoxSize = 200 80
+%   numbers         MaxDistance = 300      BoxSize = 200 80
 %                   (brackets and commas are allowed: [200, 80])
 %   true or false   HideParentAtSplit = false
 %   a list of text  RolesShown = ego, confederate, pedestrian
@@ -58,7 +58,7 @@ function [criteria, changedNames] = fcn_AnimateCar3D_changeDisplayCriteria(crite
 %
 % EXAMPLES:
 %
-%       criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('FarDistance',150));
+%       criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('MaxDistance',300));
 %       criteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, 'liveFolder/displayCriteria.txt', OnError='warn');
 %
 %       See the script: script_test_fcn_AnimateCar3D_changeDisplayCriteria.m
@@ -73,6 +73,11 @@ function [criteria, changedNames] = fcn_AnimateCar3D_changeDisplayCriteria(crite
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_changeDisplayCriteria
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_changeDisplayCriteria
+%   % * Examples and checks for the size-on-screen criteria (MaxDistance,
+%   %   % TopScreenSize, and so on, in place of the tier distances)
 
 % TO-DO:
 %
@@ -145,7 +150,7 @@ if 0==flag_max_speed
 
 
         % Check the criteria input
-        if ~(isstruct(criteria) && isscalar(criteria) && all(isfield(criteria,{'Region','NearDistance','RolesShown'})))
+        if ~(isstruct(criteria) && isscalar(criteria) && all(isfield(criteria,{'Region','TopScreenSize','RolesShown'})))
             error('criteria must come from fcn_AnimateCar3D_fillDisplayCriteria');
         end
 

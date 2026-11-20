@@ -6,7 +6,7 @@ function checkReport = fcn_AnimateCar3D_checkCarMesh3D(options)
 % changing a working copy of CarMesh3D, to find any conflict before it
 % shows up as a confusing error deep inside an animation.
 %
-% The contract has six parts (each is a "category" in the report):
+% The contract has seven parts (each is a "category" in the report):
 %
 %   functions       every CarMesh3D function AnimateCar3D calls exists,
 %                   exactly once on the path, inside the CarMesh3D copy
@@ -30,6 +30,13 @@ function checkReport = fcn_AnimateCar3D_checkCarMesh3D(options)
 %                   YEAR_Make_Model_Trimline names, the file names
 %                   returned by fcn_CarMesh3D_findVehicleFiles, and the
 %                   reference vehicle list
+%   detailLevels    the detail levels (fcn_CarMesh3D_makeDetailLevels,
+%                   and a levels file in Data, read with
+%                   fcn_CarMesh3D_loadDetailLevels) have the fields
+%                   AnimateCar3D reads, in the format version it
+%                   knows: levels from finest to coarsest by
+%                   MaxScreenSize, the last one a box, and each level's
+%                   mesh with the fields of a finished mesh
 %
 % FORMAT:
 %
@@ -77,7 +84,7 @@ function checkReport = fcn_AnimateCar3D_checkCarMesh3D(options)
 %               Passed, Message (why it failed, or empty)
 %           CarMesh3DRoot: the CarMesh3D copy that was checked
 %           CarMesh3DName: that copy's folder name (for a release, its
-%               version, e.g. CarMesh3D_2026_11_19b)
+%               version, e.g. CarMesh3D_2026_11_20)
 %           Contract: the contract used
 %
 % DEPENDENCIES:
@@ -105,6 +112,14 @@ function checkReport = fcn_AnimateCar3D_checkCarMesh3D(options)
 % - In fcn_AnimateCar3D_checkCarMesh3D
 %   % * Added the scene player's uses: the LightPatches handle and the
 %   %   % pose to transform convention
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_checkCarMesh3D
+%   % * Added the detailLevels category (CarMesh3D 2026_11_20): the
+%   %   % functions fcn_CarMesh3D_makeDetailLevels and
+%   %   % fcn_CarMesh3D_loadDetailLevels, the levels file's fields and
+%   %   % format version, and LevelsFile and HasLevels in the vehicle
+%   %   % folder rules
 
 % TO-DO:
 %
@@ -173,7 +188,7 @@ end
 %              |_|
 % See: http://patorjk.com/software/taag/#p=display&f=Big&t=Inputs
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-allCategories = {'functions','inputs','motionColumns','meshFields','plotting','vehicleFolders'};
+allCategories = {'functions','inputs','motionColumns','meshFields','plotting','vehicleFolders','detailLevels'};
 
 if 0==flag_max_speed
     if flag_check_inputs
@@ -282,6 +297,9 @@ end
 if any(strcmp(categoriesToRun,'vehicleFolders'))
     results = [results; fcn_INTERNAL_checkVehicleFolders(contract, carMesh3DRoot)];
 end
+if any(strcmp(categoriesToRun,'detailLevels'))
+    results = [results; fcn_INTERNAL_checkDetailLevels(contract, carMesh3DRoot)];
+end
 
 % Fill the report
 resultsTable = cell2table(results, 'VariableNames', {'Category','Item','Passed','Message'});
@@ -383,6 +401,8 @@ functionList = {
     'fcn_CarMesh3D_labelParts',             1, {'BodyColor','FigNum'}
     'fcn_CarMesh3D_fitMeshToSpec',          2, {'FigNum'}
     'fcn_CarMesh3D_simplifyMesh',           1, {'TargetFaces','FigNum'}
+    'fcn_CarMesh3D_makeDetailLevels',       1, {'FigNum'}
+    'fcn_CarMesh3D_loadDetailLevels',       1, {'DataFolder','MakeIfMissing','FigNum'}
     };
 contract.Functions = cell2struct(functionList, {'Name','NumRequiredInputs','Options'}, 2);
 
@@ -418,10 +438,19 @@ contract.PoseToMatrix = @(pose) makehgtform('translate',pose(1:3)) * makehgtform
 % Vehicle folder rules
 contract.VehicleIDPattern = '^\d{4}_[A-Za-z0-9]+_[A-Za-z0-9]+_[A-Za-z0-9]+$';
 contract.VehicleFileFields = {'ID','Name','Folder','ParametersFile','ScriptFile','MeshFile', ...
-    'HasParameters','HasScript','HasMesh'};
+    'LevelsFile','HasParameters','HasScript','HasMesh','HasLevels'};
 contract.VehicleScriptName = 'script_CarMesh3D_vehicle_%s.m';   % %s is the vehicle ID
 contract.VehicleMeshName = 'vehicleMesh_%s.mat';
 contract.VehicleMeshVariables = {'vehicleMesh','vehicleSpec'};
+contract.VehicleLevelsName = 'vehicleLevels_%s.mat';
+contract.VehicleLevelsVariables = {'detailLevels'};
+
+% The detail levels (fcn_CarMesh3D_makeDetailLevels and
+% fcn_CarMesh3D_loadDetailLevels): the fields AnimateCar3D reads, and the
+% one format version it knows
+contract.DetailLevelsFields = {'Levels','SizeDiagonal','BoxCenter','BoxSize','TopScreenSize','FormatVersion'};
+contract.DetailLevelFields = {'MaxScreenSize','Faces','IsBox','Mesh'};
+contract.DetailLevelsFormatVersion = 1;
 contract.ReferenceListFile = 'referenceVehicles.csv';            % in the Data folder
 contract.ReferenceListColumns = {'ID','Name','Length_m','Width_m','Height_m','Wheelbase_m','Faces','GIF'};
 end % Ends fcn_INTERNAL_defaultContract
@@ -673,6 +702,10 @@ try
             if ~strcmp([meshName meshExtension], sprintf(contract.VehicleMeshName, vehicleID))
                 problems{end+1} = sprintf('mesh file is named %s; expected %s', [meshName meshExtension], sprintf(contract.VehicleMeshName, vehicleID)); %#ok<AGROW>
             end
+            [~, levelsName, levelsExtension] = fileparts(vehicleFiles.LevelsFile);
+            if ~strcmp([levelsName levelsExtension], sprintf(contract.VehicleLevelsName, vehicleID))
+                problems{end+1} = sprintf('levels file is named %s; expected %s', [levelsName levelsExtension], sprintf(contract.VehicleLevelsName, vehicleID)); %#ok<AGROW>
+            end
             if ~vehicleFiles.HasParameters
                 problems{end+1} = 'no vehicleParameters file'; %#ok<AGROW>
             end
@@ -702,6 +735,102 @@ catch ME
     results(end+1,:) = {'vehicleFolders', 'reference vehicle list', false, ME.message};
 end
 end % Ends fcn_INTERNAL_checkVehicleFolders
+
+
+%% fcn_INTERNAL_checkDetailLevels
+function results = fcn_INTERNAL_checkDetailLevels(contract, carMesh3DRoot)
+% Levels made from the sample car, and a levels file from Data
+results = cell(0,4);
+try
+    vehicleSpec = fcn_CarMesh3D_fillVehicleSpec(Preset='genericSedan', FigNum=-1);
+    vehicleMesh = fcn_INTERNAL_makeSampleMesh(vehicleSpec);
+    detailLevels = fcn_CarMesh3D_makeDetailLevels(vehicleMesh, FigNum=-1);
+    results = [results; fcn_INTERNAL_levelsResults(contract, 'levels made from the sample car (makeDetailLevels)', detailLevels)];
+catch ME
+    results(end+1,:) = {'detailLevels', 'levels made from the sample car (makeDetailLevels)', false, ME.message};
+end
+
+% A levels file in the Data folder (the first vehicle that has one)
+dataFolder = fullfile(carMesh3DRoot,'Data');
+try
+    allVehicles = fcn_CarMesh3D_findVehicleFiles('', DataFolder=dataFolder, FigNum=-1);
+    levelsVehicle = '';
+    for ith_vehicle = 1:length(allVehicles)
+        vehicleFiles = fcn_CarMesh3D_findVehicleFiles(allVehicles(ith_vehicle).ID, DataFolder=dataFolder, FigNum=-1);
+        if isfield(vehicleFiles,'HasLevels') && vehicleFiles.HasLevels
+            levelsVehicle = vehicleFiles.ID;
+            break;
+        end
+    end
+    if isempty(levelsVehicle)
+        results(end+1,:) = {'detailLevels', 'levels file in Data', false, 'no vehicle in Data has a levels file (run a vehicle script''s Step 6b)'};
+    else
+        savedVariables = whos('-file', vehicleFiles.LevelsFile);
+        missingVariables = setdiff(contract.VehicleLevelsVariables, {savedVariables.name}, 'stable');
+        if ~isempty(missingVariables)
+            results(end+1,:) = {'detailLevels', sprintf('levels file in Data (%s)', levelsVehicle), false, ...
+                sprintf('the file is missing variable(s): %s', strjoin(missingVariables,', '))};
+        else
+            detailLevels = fcn_CarMesh3D_loadDetailLevels(levelsVehicle, DataFolder=dataFolder, MakeIfMissing=false, FigNum=-1);
+            results = [results; fcn_INTERNAL_levelsResults(contract, sprintf('levels file in Data (%s, read by loadDetailLevels)', levelsVehicle), detailLevels)];
+        end
+    end
+catch ME
+    results(end+1,:) = {'detailLevels', 'levels file in Data', false, ME.message};
+end
+end % Ends fcn_INTERNAL_checkDetailLevels
+
+
+%% fcn_INTERNAL_levelsResults
+function results = fcn_INTERNAL_levelsResults(contract, itemName, detailLevels)
+% The fields, format version, and order of one set of detail levels
+results = cell(0,4);
+results(end+1,:) = fcn_INTERNAL_fieldResult('detailLevels', [itemName ': fields'], detailLevels, contract.DetailLevelsFields);
+if ~all(isfield(detailLevels, contract.DetailLevelsFields))
+    return;
+end
+if isequal(detailLevels.FormatVersion, contract.DetailLevelsFormatVersion)
+    results(end+1,:) = {'detailLevels', [itemName ': format version'], true, ''};
+else
+    results(end+1,:) = {'detailLevels', [itemName ': format version'], false, ...
+        sprintf('format version %s; AnimateCar3D knows version %d', num2str(detailLevels.FormatVersion), contract.DetailLevelsFormatVersion)};
+end
+levels = detailLevels.Levels;
+problems = {};
+if isempty(levels) || ~isstruct(levels)
+    problems{end+1} = 'Levels is empty';
+else
+    missingFields = setdiff(contract.DetailLevelFields, fieldnames(levels), 'stable');
+    if ~isempty(missingFields)
+        problems{end+1} = sprintf('each level is missing field(s): %s', strjoin(missingFields,', '));
+    else
+        sizes = [levels.MaxScreenSize];
+        if any(diff(sizes) >= 0)
+            problems{end+1} = 'MaxScreenSize does not fall from the first level to the last';
+        end
+        if sizes(1) > detailLevels.TopScreenSize + 1e-9
+            % (It can be smaller: a level that would need as many faces as
+            % the full mesh is not made)
+            problems{end+1} = 'the first level''s MaxScreenSize is above TopScreenSize';
+        end
+        if ~levels(end).IsBox || any([levels(1:end-1).IsBox])
+            problems{end+1} = 'only the last level should be a box';
+        end
+        for ith_level = find(~[levels.IsBox])
+            missingMeshFields = setdiff(contract.MeshFields, fieldnames(levels(ith_level).Mesh), 'stable');
+            if ~isempty(missingMeshFields)
+                problems{end+1} = sprintf('level %d''s mesh is missing field(s): %s', ith_level, strjoin(missingMeshFields,', ')); %#ok<AGROW>
+                break;
+            end
+        end
+    end
+end
+if ~(isnumeric(detailLevels.SizeDiagonal) && isscalar(detailLevels.SizeDiagonal) && detailLevels.SizeDiagonal>0 ...
+        && isnumeric(detailLevels.BoxCenter) && numel(detailLevels.BoxCenter)==3)
+    problems{end+1} = 'SizeDiagonal must be a positive number and BoxCenter [x y z]';
+end
+results(end+1,:) = {'detailLevels', [itemName ': levels'], isempty(problems), strjoin(problems,'; ')};
+end % Ends fcn_INTERNAL_levelsResults
 
 
 %% fcn_INTERNAL_makeSampleMesh

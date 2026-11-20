@@ -29,12 +29,22 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %            deleted.
 %   Tiers    'near' objects get everything fcn_CarMesh3D_plotVehicle
 %            does (wheels, steering, body motion, lights). 'middle'
-%            objects use the low-detail mesh and only move. 'far' objects
-%            are boxes, all in ONE patch whose vertices are updated each
-%            step.
-%   Style    Color tints the body (not glass, wheels, or lamps); Alpha
-%            makes the whole vehicle see-through. Both are reapplied only
-%            when they change.
+%            objects use one of their mesh's detail levels (see Levels
+%            below) and only move. 'far' objects use a detail level too,
+%            down to a box, and are all merged into ONE patch whose
+%            vertices are updated each step (simple shapes and boxes in a
+%            second patch, with edges).
+%   Levels   A middle or far object's Level (from the selector) picks
+%            its detail level; if it is NaN, the level made for its
+%            ScreenSize (the coarsest whose MaxScreenSize is at least
+%            ScreenSize); with neither, middle objects use the finest
+%            level and far objects a box. Level 0 is the full mesh
+%            (middle only). A middle object whose level changes gets the
+%            graphics of its new level (reused if free).
+%   Style    Color tints the body and trim, by part (not glass, wheels,
+%            or lamps, whatever their opacity); Alpha makes the whole
+%            vehicle see-through (middle and near; merged objects are
+%            drawn opaque). Both are reapplied only when they change.
 %
 % FORMAT:
 %
@@ -82,12 +92,16 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %           Step: how many steps have been drawn
 %           Pool: the reusable vehicle graphics (one entry per drawn
 %               vehicle, visible or hidden)
-%           BoxPatch: the patch of all far boxes
+%           BoxPatch: the patch of far boxes and simple shapes
+%           MergedPatch: the patch of far vehicles drawn with a detail
+%               level's mesh
+%           MergedCache: each merged mesh, ready to place (by mesh and
+%               level)
 %           ScratchAxes: the hidden axes new vehicles are drawn in
 %           Stats: counts for the last step: NumNear, NumMiddle, NumFar,
-%               NumCreated, NumReused, NumHidden, NumDeleted, NumPooled,
-%               and UpdateSeconds (time spent in this function, not
-%               counting drawnow)
+%               NumMergedFaces, NumCreated, NumReused, NumHidden,
+%               NumDeleted, NumPooled, and UpdateSeconds (time spent in
+%               this function, not counting drawnow)
 %
 % DEPENDENCIES:
 %
@@ -107,6 +121,14 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playScene
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_playScene
+%   % * Detail levels: middle objects use a level's mesh (Level, or the level
+%   %   % made for ScreenSize); far vehicles use a level's mesh too, merged into
+%   %   % one patch (MergedPatch), with boxes and simple shapes in another;
+%   %   % Color tints by part (not glass, wheels, or lamps), face by face;
+%   %   % NumMergedFaces in Stats
 
 % TO-DO:
 %
@@ -254,11 +276,15 @@ if strcmp(options.Action,'clear')
         if isgraphics(playerState.BoxPatch)
             delete(playerState.BoxPatch);
         end
+        if isfield(playerState,'MergedPatch') && isgraphics(playerState.MergedPatch)
+            delete(playerState.MergedPatch);
+        end
         if isgraphics(playerState.ScratchAxes)
             delete(ancestor(playerState.ScratchAxes,'figure'));
         end
         playerState.Pool = playerState.Pool([]);
         playerState.BoxPatch = gobjects(1);
+        playerState.MergedPatch = gobjects(1);
         playerState.ScratchAxes = gobjects(1);
     end
     return;
@@ -280,6 +306,8 @@ if isempty(playerState)
     playerState.Step = 0;
     playerState.Pool = repmat(fcn_INTERNAL_emptyEntry, 0, 1);
     playerState.BoxPatch = gobjects(1);
+    playerState.MergedPatch = gobjects(1);
+    playerState.MergedCache = containers.Map('KeyType','char','ValueType','any');
     playerState.ScratchAxes = gobjects(1);
     playerState.Stats = struct;
 end
@@ -304,7 +332,7 @@ end
 playerState.Step = playerState.Step + 1;
 thisStep = playerState.Step;
 pool = playerState.Pool;
-stats = struct('NumNear',0, 'NumMiddle',0, 'NumFar',0, 'NumCreated',0, 'NumReused',0, ...
+stats = struct('NumNear',0, 'NumMiddle',0, 'NumFar',0, 'NumMergedFaces',0, 'NumCreated',0, 'NumReused',0, ...
     'NumHidden',0, 'NumDeleted',0, 'NumPooled',0, 'UpdateSeconds',0);
 
 % Index the pool: which entry each visible instance has, and which
@@ -328,21 +356,33 @@ for ith_object = 1:numel(objects)
     thisObject = objects(ith_object);
     entryIndex = find(strcmp(poolInstances, thisObject.Instance), 1);
 
-    % Its entry has a different mesh or tier? Then release it
-    if ~isempty(entryIndex) && ~(strcmp(pool(entryIndex).MeshID, thisObject.MeshID) && strcmp(pool(entryIndex).Tier, thisObject.Tier))
+    % Its detail level: 0 (the full mesh) for near objects
+    meshEntry = meshSet.(matlab.lang.makeValidName(thisObject.MeshID));
+    if strcmp(thisObject.Tier,'near')
+        thisLevel = 0;
+    else
+        thisLevel = fcn_INTERNAL_middleLevel(meshEntry, thisObject.Level, thisObject.ScreenSize);
+    end
+
+    % Its entry has a different mesh, tier, or level? Then release it
+    if ~isempty(entryIndex) && ~(strcmp(pool(entryIndex).MeshID, thisObject.MeshID) && strcmp(pool(entryIndex).Tier, thisObject.Tier) ...
+            && pool(entryIndex).Level==thisLevel)
         pool(entryIndex) = fcn_INTERNAL_hideEntry(pool(entryIndex), thisStep);
         poolInstances{entryIndex} = '';
         poolFree(entryIndex) = true;
         entryIndex = [];
+        stats.NumHidden = stats.NumHidden + 1;
     end
 
-    % No entry? Reuse a free one with the same mesh and tier, or make one
+    % No entry? Reuse a free one with the same mesh, tier, and level, or
+    % make one
     if isempty(entryIndex)
-        entryIndex = find(poolFree & strcmp({pool.MeshID}, thisObject.MeshID) & strcmp({pool.Tier}, thisObject.Tier), 1);
+        entryIndex = find(poolFree & strcmp({pool.MeshID}, thisObject.MeshID) & strcmp({pool.Tier}, thisObject.Tier) ...
+            & [pool.Level]==thisLevel, 1);
         if ~isempty(entryIndex)
             stats.NumReused = stats.NumReused + 1;
         else
-            newEntry = fcn_INTERNAL_createEntry(thisObject, meshSet, playerState.Axes, playerState.ScratchAxes, options.LightEffects);
+            newEntry = fcn_INTERNAL_createEntry(thisObject, thisLevel, meshEntry, playerState.Axes, playerState.ScratchAxes, options.LightEffects);
             pool = [pool; newEntry]; %#ok<AGROW>
             poolInstances{end+1} = ''; %#ok<AGROW>
             poolFree(end+1) = true; %#ok<AGROW>
@@ -357,7 +397,6 @@ for ith_object = 1:numel(objects)
 
     % Move it
     if strcmp(thisObject.Tier,'near')
-        meshEntry = meshSet.(matlab.lang.makeValidName(thisObject.MeshID));
         plotArguments = {'Pose',thisObject.Pose, 'WheelSpin',thisObject.WheelSpin, ...
             'SteerAngle',thisObject.SteerAngle, 'WheelLift',thisObject.WheelLift, ...
             'BodyRoll',thisObject.BodyRoll, 'BodyPitch',thisObject.BodyPitch, ...
@@ -388,8 +427,14 @@ end
 pool = pool(~flagStale);
 stats.NumDeleted = sum(flagStale);
 
-%%%% Far boxes, all in one patch
-playerState.BoxPatch = fcn_INTERNAL_updateBoxes(playerState.BoxPatch, displayList.Boxes, meshSet, playerState.Axes);
+%%%% Far objects: merged meshes in one patch, boxes and simple shapes in
+%%%% another
+if ~isfield(playerState,'MergedPatch')
+    playerState.MergedPatch = gobjects(1);
+    playerState.MergedCache = containers.Map('KeyType','char','ValueType','any');
+end
+[playerState.BoxPatch, playerState.MergedPatch, playerState.MergedCache, stats.NumMergedFaces] = fcn_INTERNAL_updateFar( ...
+    playerState.BoxPatch, playerState.MergedPatch, playerState.MergedCache, displayList.Boxes, meshSet, playerState.Axes, options.TintStrength);
 stats.NumFar = numel(displayList.Boxes.Instance);
 
 % Done
@@ -435,26 +480,53 @@ end % Ends main function
 %% fcn_INTERNAL_emptyEntry
 function entry = fcn_INTERNAL_emptyEntry
 % One pool entry: the graphics of one drawn vehicle
-entry = struct('Instance','', 'MeshID','', 'Tier','', 'Handles',[], 'LastStepUsed',0, ...
-    'StyleKey',[], 'TintPatches',{{}}, 'TintOriginal',{{}}, 'AllPatches',{{}}, 'AlphaOriginal',[]);
+entry = struct('Instance','', 'MeshID','', 'Tier','', 'Level',0, 'Handles',[], 'LastStepUsed',0, ...
+    'StyleKey',[], 'TintPatches',{{}}, 'TintOriginal',{{}}, 'TintMasks',{{}}, 'AllPatches',{{}}, 'AlphaOriginal',[]);
 end % Ends fcn_INTERNAL_emptyEntry
 
+%% fcn_INTERNAL_middleLevel
+function thisLevel = fcn_INTERNAL_middleLevel(meshEntry, requestedLevel, screenSize)
+% The detail level a middle object is drawn with: its Level, or the level
+% made for its ScreenSize, or the finest; never the box (the coarsest
+% mesh level instead); 0 is the full mesh
+levels = meshEntry.Levels;
+if isempty(levels)
+    thisLevel = 0;
+    return;
+end
+if ~isnan(requestedLevel)
+    thisLevel = requestedLevel;
+elseif ~isnan(screenSize)
+    thisLevel = find([levels.MaxScreenSize] >= screenSize, 1, 'last');
+    if isempty(thisLevel)
+        thisLevel = 0;
+    end
+else
+    thisLevel = 1;
+end
+thisLevel = min(max(round(thisLevel),0), numel(levels));
+if thisLevel>0 && levels(thisLevel).IsBox
+    thisLevel = find(~[levels.IsBox], 1, 'last');
+    if isempty(thisLevel)
+        thisLevel = 0;
+    end
+end
+end % Ends fcn_INTERNAL_middleLevel
+
 %% fcn_INTERNAL_createEntry
-function entry = fcn_INTERNAL_createEntry(thisObject, meshSet, axesHandle, scratchAxes, flagLightEffects)
+function entry = fcn_INTERNAL_createEntry(thisObject, thisLevel, meshEntry, axesHandle, scratchAxes, flagLightEffects)
 % Draw a vehicle once with fcn_CarMesh3D_plotVehicle, in the scratch axes,
-% move it into the player's axes, and remember which patches can be
+% move it into the player's axes, and remember which faces can be
 % tinted. (Drawing straight into the scene's axes would let
 % fcn_CarMesh3D_plotVehicle format that axes and add lights whenever the
 % scene's own objects are hidden handles, as fcn_CarMesh3D_plotScene's
 % are.)
-meshEntry = meshSet.(matlab.lang.makeValidName(thisObject.MeshID));
-if strcmp(thisObject.Tier,'near')
+if thisLevel==0
     thisMesh = meshEntry.Full;
-    flagEffects = flagLightEffects;
 else
-    thisMesh = meshEntry.Low;
-    flagEffects = false;
+    thisMesh = meshEntry.Levels(thisLevel).Mesh;
 end
+flagEffects = flagLightEffects && strcmp(thisObject.Tier,'near');
 previousFigure = get(0,'CurrentFigure');
 scratchFigure = ancestor(scratchAxes,'figure');
 set(0,'CurrentFigure',scratchFigure);
@@ -469,10 +541,13 @@ end
 entry = fcn_INTERNAL_emptyEntry;
 entry.MeshID = thisObject.MeshID;
 entry.Tier = thisObject.Tier;
+entry.Level = thisLevel;
 entry.Handles = handles;
 
-% Every patch (for Alpha), and the opaque body patches that are not
-% lamps (for Color)
+% Every patch (for Alpha), and, for Color, the faces of every part but
+% glass, wheels, and lamps (tint by part). A patch's faces are matched
+% to the mesh's faces by their centers, which fcn_CarMesh3D_plotVehicle
+% keeps in the vehicle's own frame.
 allPatches = handles.Patches;
 if iscell(allPatches)
     allPatches = [allPatches{:}];
@@ -485,20 +560,57 @@ if isfield(handles,'LightPatches') && isstruct(handles.LightPatches)
         lampPatches = [lampPatches, handles.LightPatches.(lampNames{ith_name})]; %#ok<AGROW>
     end
 end
+flagTintFace = fcn_INTERNAL_tintableFaces(thisMesh);
+meshCenters = fcn_INTERNAL_faceCenters(thisMesh.Vertices, thisMesh.Faces);
 tintPatches = gobjects(0);
+tintMasks = {};
 for ith_patch = 1:numel(allPatches)
     thisPatch = allPatches(ith_patch);
-    if isequal(get(thisPatch,'Parent'), handles.BodyTransform) && ~any(lampPatches==thisPatch) ...
-            && get(thisPatch,'FaceAlpha') >= 0.999
+    if any(lampPatches==thisPatch)
+        continue;
+    end
+    patchFaces = get(thisPatch,'Faces');
+    [flagFound, meshRows] = ismembertol(fcn_INTERNAL_faceCenters(get(thisPatch,'Vertices'), patchFaces), meshCenters, ...
+        1e-9, 'ByRows', true, 'DataScale', 1);
+    if any(flagFound)
+        mask = false(size(patchFaces,1),1);
+        mask(flagFound) = flagTintFace(meshRows(flagFound));
+    else
+        % (Faces not found: the old rule, opaque body patches)
+        mask = repmat(isequal(get(thisPatch,'Parent'), handles.BodyTransform) && get(thisPatch,'FaceAlpha') >= 0.999, ...
+            size(patchFaces,1), 1);
+    end
+    if any(mask)
         tintPatches(end+1) = thisPatch; %#ok<AGROW>
+        tintMasks{end+1} = mask; %#ok<AGROW>
     end
 end
 entry.AllPatches = num2cell(allPatches);
 entry.AlphaOriginal = arrayfun(@(p) get(p,'FaceAlpha'), allPatches);
 entry.TintPatches = num2cell(tintPatches);
 entry.TintOriginal = arrayfun(@(p) get(p,'FaceVertexCData'), tintPatches, 'UniformOutput', false);
+entry.TintMasks = tintMasks;
 entry.StyleKey = [nan(1,3), 1];   % the mesh's own colors, opaque
 end % Ends fcn_INTERNAL_createEntry
+
+%% fcn_INTERNAL_tintableFaces
+function flagTint = fcn_INTERNAL_tintableFaces(thisMesh)
+% The faces Color tints: every part but glass, wheels, and lamps
+untinted = find(ismember(lower(thisMesh.PartNames), {'glass','wheel','light'}));
+flagTint = ~ismember(thisMesh.FacePartIndex(:), untinted);
+end % Ends fcn_INTERNAL_tintableFaces
+
+%% fcn_INTERNAL_faceCenters
+function centers = fcn_INTERNAL_faceCenters(vertices, faces)
+% The mean of each face's corners (faces may be padded with NaN)
+Ncorners = sum(~isnan(faces),2);
+centers = zeros(size(faces,1),3);
+for ith_corner = 1:size(faces,2)
+    flagHas = ~isnan(faces(:,ith_corner));
+    centers(flagHas,:) = centers(flagHas,:) + vertices(faces(flagHas,ith_corner),:);
+end
+centers = centers./Ncorners;
+end % Ends fcn_INTERNAL_faceCenters
 
 %% fcn_INTERNAL_applyStyle
 function entry = fcn_INTERNAL_applyStyle(entry, color, alpha, tintStrength)
@@ -506,10 +618,10 @@ function entry = fcn_INTERNAL_applyStyle(entry, color, alpha, tintStrength)
 % every patch's opacity by alpha
 for ith_patch = 1:numel(entry.TintPatches)
     originalColors = entry.TintOriginal{ith_patch};
-    if any(isnan(color))
-        newColors = originalColors;
-    else
-        newColors = (1-tintStrength)*originalColors + tintStrength*repmat(color(:)', size(originalColors,1), 1);
+    newColors = originalColors;
+    if ~any(isnan(color))
+        mask = entry.TintMasks{ith_patch};
+        newColors(mask,:) = (1-tintStrength)*originalColors(mask,:) + tintStrength*repmat(color(:)', sum(mask), 1);
     end
     set(entry.TintPatches{ith_patch}, 'FaceVertexCData', newColors);
 end
@@ -547,6 +659,136 @@ cr = cos(pose(4)); sr = sin(pose(4));
 rotation = [cy -sy 0; sy cy 0; 0 0 1] * [cp 0 sp; 0 1 0; -sp 0 cp] * [1 0 0; 0 cr -sr; 0 sr cr];
 poseMatrix = [rotation, pose(1:3)'; 0 0 0 1];
 end % Ends fcn_INTERNAL_poseToMatrix
+
+%% fcn_INTERNAL_updateFar
+function [boxPatch, mergedPatch, mergedCache, numMergedFaces] = fcn_INTERNAL_updateFar(boxPatch, mergedPatch, mergedCache, ...
+    boxes, meshSet, axesHandle, tintStrength)
+% Far objects: those drawn with a detail level's mesh are merged into
+% one patch (no edges); boxes and simple shapes go in another (with
+% edges, as before)
+Nfar = numel(boxes.Instance);
+farLevels = zeros(Nfar,1);                  % 0: a box or a simple shape
+for ith_far = 1:Nfar
+    meshEntry = meshSet.(matlab.lang.makeValidName(boxes.MeshID{ith_far}));
+    levels = meshEntry.Levels;
+    if isempty(levels)
+        continue;
+    end
+    thisLevel = boxes.Level(ith_far);
+    if isnan(thisLevel)
+        if isnan(boxes.ScreenSize(ith_far))
+            thisLevel = numel(levels);                                       % a box, as before levels
+        else
+            thisLevel = find([levels.MaxScreenSize] >= boxes.ScreenSize(ith_far), 1, 'last');
+            if isempty(thisLevel)
+                thisLevel = 1;
+            end
+        end
+    end
+    thisLevel = min(max(round(thisLevel),1), numel(levels));
+    if ~levels(thisLevel).IsBox
+        farLevels(ith_far) = thisLevel;
+    end
+end
+flagMerged = farLevels>0;
+boxPatch = fcn_INTERNAL_updateBoxes(boxPatch, fcn_INTERNAL_subsetBoxes(boxes, ~flagMerged), meshSet, axesHandle);
+[mergedPatch, mergedCache, numMergedFaces] = fcn_INTERNAL_updateMerged(mergedPatch, mergedCache, ...
+    fcn_INTERNAL_subsetBoxes(boxes, flagMerged), farLevels(flagMerged), meshSet, axesHandle, tintStrength);
+end % Ends fcn_INTERNAL_updateFar
+
+%% fcn_INTERNAL_subsetBoxes
+function subset = fcn_INTERNAL_subsetBoxes(boxes, rows)
+% Some rows of the far objects
+subset = struct('Instance',{boxes.Instance(rows)}, 'MeshID',{boxes.MeshID(rows)}, 'Pose',boxes.Pose(rows,:), ...
+    'Size',boxes.Size(rows,:), 'Color',boxes.Color(rows,:));
+end % Ends fcn_INTERNAL_subsetBoxes
+
+%% fcn_INTERNAL_updateMerged
+function [mergedPatch, mergedCache, numFaces] = fcn_INTERNAL_updateMerged(mergedPatch, mergedCache, ...
+    rows, rowLevels, meshSet, axesHandle, tintStrength)
+% Far vehicles, each with its detail level's mesh, all in one patch
+Nrows = numel(rows.Instance);
+numFaces = 0;
+if Nrows==0
+    if isgraphics(mergedPatch)
+        set(mergedPatch, 'Visible', 'off');
+    end
+    return;
+end
+groupKeys = strcat(rows.MeshID(:), '|', compose('%d', rowLevels(:)));
+[uniqueKeys, ~, keyIndex] = unique(groupKeys);
+vertexBlocks = cell(numel(uniqueKeys),1);
+faceBlocks = cell(numel(uniqueKeys),1);
+colorBlocks = cell(numel(uniqueKeys),1);
+vertexCount = 0;
+for ith_key = 1:numel(uniqueKeys)
+    members = find(keyIndex==ith_key);
+    thisKey = uniqueKeys{ith_key};
+    if isKey(mergedCache, thisKey)
+        prepared = mergedCache(thisKey);
+    else
+        % Ready once: corners reversed (MATLAB's clockwise normals), the
+        % mesh's colors, and which faces Color tints
+        meshEntry = meshSet.(matlab.lang.makeValidName(rows.MeshID{members(1)}));
+        levelMesh = meshEntry.Levels(rowLevels(members(1))).Mesh;
+        prepared = struct('Vertices',levelMesh.Vertices, 'Faces',levelMesh.Faces(:,end:-1:1), ...
+            'Colors',levelMesh.FaceColors, 'TintMask',fcn_INTERNAL_tintableFaces(levelMesh));
+        mergedCache(thisKey) = prepared;
+    end
+    Nmembers = numel(members);
+    Nverts = size(prepared.Vertices,1);
+    Nfaces = size(prepared.Faces,1);
+    localX = repmat(prepared.Vertices(:,1)', Nmembers, 1);
+    localY = repmat(prepared.Vertices(:,2)', Nmembers, 1);
+    localZ = repmat(prepared.Vertices(:,3)', Nmembers, 1);
+    vertexBlocks{ith_key} = fcn_INTERNAL_placeVertices(localX, localY, localZ, rows.Pose(members,:));
+    offsets = kron(vertexCount + (0:Nmembers-1)'*Nverts, ones(Nfaces,1));
+    faceBlocks{ith_key} = repmat(prepared.Faces, Nmembers, 1) + offsets;
+    vertexCount = vertexCount + Nmembers*Nverts;
+    memberColors = repmat(prepared.Colors, Nmembers, 1);
+    for ith_member = 1:Nmembers
+        color = rows.Color(members(ith_member),:);
+        if ~any(isnan(color))
+            faceRows = (ith_member-1)*Nfaces + find(prepared.TintMask);
+            memberColors(faceRows,:) = (1-tintStrength)*memberColors(faceRows,:) + tintStrength*color;
+        end
+    end
+    colorBlocks{ith_key} = memberColors;
+end
+vertices = vertcat(vertexBlocks{:});
+faces = vertcat(faceBlocks{:});
+faceColors = vertcat(colorBlocks{:});
+numFaces = size(faces,1);
+if ~isgraphics(mergedPatch)
+    mergedPatch = patch('Parent',axesHandle, 'Faces',faces, 'Vertices',vertices, ...
+        'FaceVertexCData',faceColors, 'FaceColor','flat', 'EdgeColor','none', ...
+        'FaceLighting','flat', 'BackFaceLighting','lit', 'AmbientStrength',0.55, ...
+        'DiffuseStrength',0.65, 'SpecularStrength',0.25, 'DisplayName','Far vehicles (merged detail levels)');
+else
+    if ~isequal(size(get(mergedPatch,'Faces')), size(faces))
+        set(mergedPatch, 'Faces', []);
+    end
+    set(mergedPatch, 'Vertices',vertices, 'Faces',faces, 'FaceVertexCData',faceColors, 'Visible','on');
+end
+end % Ends fcn_INTERNAL_updateMerged
+
+%% fcn_INTERNAL_placeVertices
+function vertices = fcn_INTERNAL_placeVertices(localX, localY, localZ, poses)
+% Corners in each object's own frame (one row per object) turned by roll
+% (x), then pitch (y), then yaw (z), as CarMesh3D does, and moved to each
+% object's position; one row per corner, object by object
+roll = poses(:,4);
+pitch = poses(:,5);
+yaw = poses(:,6);
+y1 = cos(roll).*localY - sin(roll).*localZ;
+z1 = sin(roll).*localY + cos(roll).*localZ;
+x2 = cos(pitch).*localX + sin(pitch).*z1;
+z2 = -sin(pitch).*localX + cos(pitch).*z1;
+globalX = poses(:,1) + cos(yaw).*x2 - sin(yaw).*y1;
+globalY = poses(:,2) + sin(yaw).*x2 + cos(yaw).*y1;
+globalZ = poses(:,3) + z2;
+vertices = [reshape(globalX',[],1), reshape(globalY',[],1), reshape(globalZ',[],1)];
+end % Ends fcn_INTERNAL_placeVertices
 
 %% fcn_INTERNAL_updateBoxes
 function boxPatch = fcn_INTERNAL_updateBoxes(boxPatch, boxes, meshSet, axesHandle)
@@ -604,17 +846,7 @@ for ith_id = 1:numel(uniqueIDs)
     localZ = sizes(rows,3)*shape.Vertices(:,3)';
 
     % Turn by roll (x), then pitch (y), then yaw (z), as CarMesh3D does
-    roll = poses(rows,4);
-    pitch = poses(rows,5);
-    yaw = poses(rows,6);
-    y1 = cos(roll).*localY - sin(roll).*localZ;
-    z1 = sin(roll).*localY + cos(roll).*localZ;
-    x2 = cos(pitch).*localX + sin(pitch).*z1;
-    z2 = -sin(pitch).*localX + cos(pitch).*z1;
-    globalX = poses(rows,1) + cos(yaw).*x2 - sin(yaw).*y1;
-    globalY = poses(rows,2) + sin(yaw).*x2 + cos(yaw).*y1;
-    globalZ = poses(rows,3) + z2;
-    vertexBlocks{ith_id} = [reshape(globalX',[],1), reshape(globalY',[],1), reshape(globalZ',[],1)];
+    vertexBlocks{ith_id} = fcn_INTERNAL_placeVertices(localX, localY, localZ, poses(rows,:));
 
     % Faces, with each object's vertex offset, padded to one width
     % (Each face's corners are reversed: MATLAB takes a patch face's

@@ -35,6 +35,12 @@
 %   % * Removed the BreakDataIntoLaps template leftovers
 %   % * Exactly one copy of CarMesh3D is kept on the path: the installed
 %   %   % release (default), or a working copy (flag_useWorkingCarMesh3D)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In script_demo_AnimateCar3D
+%   % * Detail levels set by size on screen (CarMesh3D 2026_11_20): the
+%   %   % meshes load with their levels, the selector gets the mesh set,
+%   %   % and the display criteria use sizes on screen, not distances
 
 
 % TO-DO:
@@ -128,9 +134,10 @@ flag_saveGifs = 1;
 checkReport = fcn_AnimateCar3D_checkCarMesh3D(FigNum=-1);
 
 
-%% Step 2. Load the vehicle meshes, at two levels of detail
-% Each mesh is kept as the finished CarMesh3D mesh (near tier) and a
-% low-detail copy (middle tier); its size is kept for far-tier boxes.
+%% Step 2. Load the vehicle meshes, with their detail levels
+% Each vehicle is kept as its finished CarMesh3D mesh (drawn when it is
+% large on screen) and its ladder of detail levels from CarMesh3D (each
+% made for a largest size on screen, down to a box). Figure 2 shows them.
 % ('box' is a plain box: for static objects, and for vehicles known only
 % by their size)
 meshSet = fcn_AnimateCar3D_loadMeshes({'2013_Toyota_Prius_Four','2014_Ford_TransitConnect_XLTCargoLWB','box'}, FigNum=2);
@@ -277,10 +284,10 @@ staticScene = fcn_AnimateCar3D_loadStaticScene(fullfile(pwd,'Data','staticScene_
 catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoMotion; egoResponses; vanMotion; vanManeuvers], ...
     StaticScene=staticScene, FigNum=5);
 
-% Display criteria: the camera's view (the default). This camera
-% overlooks the crossing from 30 to 70 m away, so the tier distances are
-% set for that; confederates are drawn in full, like the ego.
-criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=90, MiddleDistance=150, FarDistance=250, ...
+% Display criteria: the camera's view (the default), out to 250 m; each
+% object's detail is set by its size on screen. Confederates are drawn
+% in full, like the ego.
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=250, ...
     FixedTiers={'ego','near'; 'confederate','near'}, BranchAlpha=0.55);
 
 % The scene, camera, and loop
@@ -303,7 +310,7 @@ branchLines = gobjects(numel(branchNames),1);
 for ith_step = 1:numel(timeSteps)
     t = timeSteps(ith_step);
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
-        SelectorState=selectorState, Camera=gca);
+        SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
 
     % Path lines on the ground for each branch, so far
@@ -368,7 +375,7 @@ for fieldName = {'WheelSpin','SteerAngle','LightStates'}    % same fields as the
 end
 catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoDrive; trafficMotions], StaticScene=staticScene, ...
     CacheFile=fullfile(tempdir,'AnimateCar3D_demoTrafficCatalog.mat'));
-criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=55, MiddleDistance=95, FarDistance=170);
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=250);
 
 figNum = 7;
 figure(figNum); clf;
@@ -388,10 +395,10 @@ for ith_step = 1:numel(egoTime)
     t = egoTime(ith_step);
     campos([cameraX(t)-30 -42 24]); camtarget([cameraX(t)+25 0 0]); camva(42);
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
-        SelectorState=selectorState, Camera=gca);
+        SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
     stats = selectorState.Stats;
-    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.1f s: %d candidates; drawn %d near, %d middle, %d boxes', t, ...
+    fcn_INTERNAL_setCaption(gcf, sprintf('t = %.1f s: %d candidates; drawn %d near, %d middle, %d far (merged)', t, ...
         stats.NumCandidates, stats.NumNear, stats.NumMiddle, stats.NumFar));
     drawnow;
     if flag_saveGifs && mod(ith_step-1,3)==0
@@ -419,7 +426,8 @@ fprintf(1,'Traffic demo: %d vehicles in the file; at the end, %d candidates near
 % loop watches the folder (fcn_AnimateCar3D_watchFolder), updates the
 % catalog (fcn_AnimateCar3D_updateCatalog), and draws 1 s behind the
 % newest data. Partway through, a person "edits" displayCriteria.txt in
-% the folder: first all traffic is drawn as boxes, then in detail again
+% the folder: first all traffic is merged (each vehicle at its detail
+% level, in one patch), then back to the defaults
 % (fcn_AnimateCar3D_changeDisplayCriteria). The camera follows the ego.
 liveFolder = fullfile(tempdir, 'AnimateCar3D_liveDemo');
 if isfolder(liveFolder)
@@ -467,11 +475,12 @@ end
 liveList = fcn_AnimateCar3D_loadSceneList(liveRows);
 
 % The display criteria at the start, and the "edits" made while running
-% (Distances are from the camera, which is 22 m behind the ego.)
-criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=30, MiddleDistance=55, FarDistance=95);
+% (Sizes on screen, in pixels: at 4 s every vehicle but the ego is
+% merged, at its detail level; at 7 s back to the defaults.)
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=150);
 criteriaFile = fullfile(liveFolder, 'displayCriteria.txt');
-criteriaEdits = {4, ["% All traffic as boxes"; "NearDistance = 1"; "MiddleDistance = 2"], 'edited: all traffic as boxes'; ...
-                 7, ["% Back to detail"; "NearDistance = 30"; "MiddleDistance = 55"], 'edited: traffic in detail again'};
+criteriaEdits = {4, ["% All traffic merged"; "TopScreenSize = 10000"; "MergeBelowSize = 10000"], 'edited: all traffic merged'; ...
+                 7, ["% Back to the defaults"; "TopScreenSize = 105"; "MergeBelowSize = 37"], 'edited: defaults again'};
 criteriaNote = 'criteria: as started';
 
 figNum = 8;
@@ -534,11 +543,11 @@ for ith_step = 1:numel(writerTimes)
     campos([egoXY(1)-22, egoXY(2)-16, 10]);
     camtarget([egoXY(1)+18, egoXY(2)+1, 0]);
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, showTime, criteria, ...
-        SelectorState=selectorState, Camera=gca);
+        SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
     stats = selectorState.Stats;
     fcn_INTERNAL_setCaption(gcf, {sprintf('showing t = %.1f s; newest data %.1f s; %d files in the folder', showTime, update.LatestTime, ...
-        update.NumInstances), sprintf('%s: %d near, %d middle, %d boxes', criteriaNote, stats.NumNear, ...
+        update.NumInstances), sprintf('%s: %d near, %d middle, %d far (merged)', criteriaNote, stats.NumNear, ...
         stats.NumMiddle, stats.NumFar)});
     drawnow;
     if flag_saveGifs && mod(ith_step-1,2)==0
@@ -565,8 +574,8 @@ rmdir(liveFolder, 's');
 % 'pedestrian') cross the road; the ego stops for them, then drives on to
 % a parking gate (role 'movingItem', shape 'bar'), whose arm rises as the
 % ego comes near: its pitch changes over time. Posts along the sidewalks
-% are static cylinders. Simple shapes are drawn with the far boxes, all in
-% one patch, so a crowd costs little.
+% are static cylinders. Simple shapes are drawn with the far boxes and
+% shapes, all in one patch, so a crowd costs little.
 dt = 0.1;
 egoSpeed = @(t) 10*(t<1.5) + max(0, 10-(10/3)*(t-1.5)).*(t>=1.5 & t<4.5) + ...
     min(10, 2.5*max(0,t-6.5)).*(t>=6.5);
@@ -619,7 +628,7 @@ staticRows = struct('x', num2cell([postX, postX, 85, 20, 70]), ...
 gateStatic = fcn_AnimateCar3D_loadStaticScene(staticRows);
 meshSet = fcn_AnimateCar3D_loadMeshes({'pedestrian','bar','cylinder'}, MeshSet=meshSet);
 catalog = fcn_AnimateCar3D_buildCatalog(gateList, Motions=gateMotions, StaticScene=gateStatic);
-criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=120, MiddleDistance=150, FarDistance=200);
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=200);
 
 figNum = 9;
 figure(figNum); clf;
@@ -644,7 +653,7 @@ for ith_step = 1:numel(timeSteps)
     egoState = fcn_AnimateCar3D_getObjectState(catalog, egoIndex, t, Detail='pose', FigNum=-1);
     campos([egoState.Pose(1)-6, -21, 8]); camtarget([egoState.Pose(1)+13, 1, 0.5]);   % follow the ego
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
-        SelectorState=selectorState, Camera=gca);
+        SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
     numWalkers = sum(strcmp(displayList.Boxes.MeshID, 'pedestrian'));
     fcn_INTERNAL_setCaption(gcf, sprintf('t = %.1f s: %d pedestrians; ego speed %.1f m/s; gate arm at %.0f deg', ...

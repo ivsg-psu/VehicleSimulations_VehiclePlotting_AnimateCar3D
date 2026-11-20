@@ -167,7 +167,7 @@ newList = fcn_AnimateCar3D_loadSceneList(struct('instance',{'ego','car1','walker
     'color',{[0.05 0.2 0.6],[0.1 0.7 0.1],[]}));
 writetable(struct2table(struct('instance',{'ego';'car1';'walker'}, 'role',{'ego';'traffic';'pedestrian'}, ...
     'color',{'0.05 0.2 0.6';'0.1 0.7 0.1';''})), fullfile(liveFolder,'sceneList.csv'));
-writelines("FarDistance = 150", fullfile(liveFolder,'displayCriteria.txt'));
+writelines("MaxDistance = 150", fullfile(liveFolder,'displayCriteria.txt'));
 [update, watchState] = fcn_AnimateCar3D_watchFolder(liveFolder, WatchState=watchState, Force=true);
 assert(isempty(update.Motions) && numel(update.Add)==3);
 carRow = update.Add(strcmp({update.Add.Instance},'car1'));

@@ -2,7 +2,7 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 % fcn_AnimateCar3D_selectObjects
 
 % The selector: decides, at one time step, which catalog objects are
-% drawn and at which detail tier, and builds the display list for
+% drawn, at which detail tier and level, and builds the display list for
 % fcn_AnimateCar3D_playScene. It is the only part of AnimateCar3D that
 % decides what to show.
 %
@@ -15,14 +15,30 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %      hidden once its first branch splits off (HideParentAtSplit).
 %   3. Region test: inside the camera's view, or the circle or box
 %      around the center (always-shown objects skip this test).
-%   4. Tiers, nearest first: near (up to NearCount within NearDistance),
-%      then middle, then far (boxes). Objects already at a tier keep it
-%      until they are beyond its distance times (1 + Hysteresis). Fixed
-%      tiers (the ego is always near) come first; 'box' objects are
-%      always far.
-%   5. Read each drawn object's state at this time (full detail for near
+%   4. Size on screen: D x scale / distance, with D the diagonal of the
+%      object's bounding box and the distance to the box's center, from
+%      the camera (scale: the axes' smaller side in pixels / (2
+%      tan(view angle/2))), or without a camera from Center (scale:
+%      NominalScale). D and the box come from MeshSet; without it, from
+%      the object's Size (or a typical car's).
+%   5. Tiers, largest on screen first: near (larger than TopScreenSize,
+%      up to NearCount), then middle (larger than MergeBelowSize, up to
+%      MiddleCount), then far (MinScreenSize or larger). Objects already
+%      at a tier keep it until their size passes its boundary by the
+%      fraction Hysteresis. Fixed tiers (the ego is always near) come
+%      first; simple shapes are always far.
+%   6. Detail levels (with MeshSet): each middle and far vehicle gets the
+%      coarsest level made for at least its size on screen. A vehicle
+%      moves to a finer level as soon as it grows past its level's
+%      MaxScreenSize, and to a coarser one only once it has shrunk past
+%      the boundary by the fraction Hysteresis (so it is never drawn with
+%      fewer faces than its size needs). One exception bounds the cost of
+%      dense scenes: a far vehicle larger than MergeBelowSize (merged only
+%      because MiddleCount objects are already drawn separately) gets no
+%      finer level than the one made for MergeBelowSize.
+%   7. Read each drawn object's state at this time (full detail for near
 %      objects, reading motion files only now and only once).
-%   6. Style: an object's own color and alpha, or its role's default
+%   8. Style: an object's own color and alpha, or its role's default
 %      (confederates tinted ConfederateColor; branches take their
 %      parent's color and BranchAlpha).
 %
@@ -30,7 +46,8 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %
 %       [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(...
 %           catalog, sceneTime, criteria,...
-%           (SelectorState=state), (Camera=camera), (FigNum=figNum))
+%           (SelectorState=state), (Camera=camera), (MeshSet=meshSet),...
+%           (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -47,13 +64,21 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %      hysteresis, files already read, and the static lookup). Empty
 %      (default) to start.
 %
-%      Camera: the camera, for Region='cameraView' or Center='camera':
-%      an axes handle (its camera is read: position, target, up vector,
-%      view angle, and shape), or a structure with fields Position,
-%      Target, ViewAngle (degrees), and optionally UpVector and
-%      AspectRatio (width/height). Set the camera for this step before
-%      selecting. Without a camera, 'cameraView' falls back to a circle
-%      of radius FarDistance around Center.
+%      Camera: the camera, for Region='cameraView', Center='camera', and
+%      sizes on screen: an axes handle (its camera is read: position,
+%      target, up vector, view angle, and its size in pixels), or a
+%      structure with fields Position, Target, ViewAngle (degrees), and
+%      optionally UpVector, AspectRatio (width/height, default 16/9),
+%      and Pixels (the axes' smaller side, default 450). Set the camera
+%      for this step before selecting. Without a camera, 'cameraView'
+%      falls back to a circle of radius MaxDistance around Center, and
+%      sizes on screen use NominalScale.
+%
+%      MeshSet: the mesh set from fcn_AnimateCar3D_loadMeshes (the one
+%      given to the player). With it, sizes on screen use each mesh's D
+%      and box, and middle and far vehicles get detail levels; without
+%      it (the default, []), sizes are estimated from the objects' Size,
+%      and the player chooses levels from ScreenSize.
 %
 %      FigNum: a figure number to plot the selection from above: every
 %      candidate, the region, and the drawn objects colored by tier.
@@ -64,11 +89,11 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %      displayList: for fcn_AnimateCar3D_playScene.
 %
 %      selectorState: pass back on the next call. Fields: Tiers (a map
-%      from instance to its tier, 1 near, 2 middle, 3 far),
-%      LoadedMotions, StaticCache, Entered and Left (instances that
-%      started or stopped being drawn this step), and Stats
-%      (NumCandidates, NumNear, NumMiddle, NumFar, RegionUsed,
-%      SelectSeconds).
+%      from instance to its tier, 1 near, 2 middle, 3 far), Levels (a map
+%      from instance to its detail level), LoadedMotions, StaticCache,
+%      SizeCache, Entered and Left (instances that started or stopped
+%      being drawn this step), and Stats (NumCandidates, NumNear,
+%      NumMiddle, NumFar, NumTooSmall, RegionUsed, SelectSeconds).
 %
 % DEPENDENCIES:
 %
@@ -79,7 +104,7 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %
 %       criteria = fcn_AnimateCar3D_fillDisplayCriteria();
 %       [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria,...
-%           SelectorState=selectorState, Camera=gca);
+%           SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
 %
 %       See the script: script_test_fcn_AnimateCar3D_selectObjects.m for a
 %       full test suite.
@@ -93,12 +118,22 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_selectObjects
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_selectObjects
+%   % * Tiers and detail levels set by size on screen (pixels), with
+%   %   % hysteresis in pixels; the MeshSet option (each mesh's D, box, and
+%   %   % levels); Pixels in a camera structure; Level and ScreenSize in the
+%   %   % display list; NumTooSmall in Stats
+%   % * Far vehicles over MergeBelowSize (past the middle count) are capped
+%   %   % at the level made for MergeBelowSize
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_selectObjects
-%   % * Objects added while running (watched folder, step 3)
+%   % * Limit the levels used by separate objects (every other level, say),
+%   %   % where a switch costs new graphics
 
 
 
@@ -114,6 +149,7 @@ arguments
     criteria
     options.SelectorState = []   % the state from the previous call; [] to start
     options.Camera = []          % axes handle, or struct with Position, Target, ViewAngle
+    options.MeshSet = []         % from fcn_AnimateCar3D_loadMeshes: D, boxes, and levels
     options.FigNum = []          % figure to plot the selection; -1 for fast mode
 end
 
@@ -177,7 +213,7 @@ if 0==flag_max_speed
         end
 
         % Check the criteria input
-        if ~(isstruct(criteria) && all(isfield(criteria,{'Region','Center','NearDistance','Hysteresis'})))
+        if ~(isstruct(criteria) && all(isfield(criteria,{'Region','Center','TopScreenSize','MergeBelowSize','Hysteresis'})))
             error('criteria must come from fcn_AnimateCar3D_fillDisplayCriteria');
         end
 
@@ -185,6 +221,11 @@ if 0==flag_max_speed
         camera = options.Camera;
         if ~isempty(camera) && ~(isgraphics(camera,'axes') || (isstruct(camera) && all(isfield(camera,{'Position','Target','ViewAngle'}))))
             error('Camera must be an axes handle, or a structure with Position, Target, and ViewAngle');
+        end
+
+        % Check the MeshSet input
+        if ~isempty(options.MeshSet) && ~(isstruct(options.MeshSet) && isfield(options.MeshSet,'IDs'))
+            error('MeshSet must come from fcn_AnimateCar3D_loadMeshes');
         end
 
         % Check the SelectorState input
@@ -229,6 +270,14 @@ if isempty(selectorState)
     selectorState.LoadedMotions = containers.Map('KeyType','char','ValueType','any');
     selectorState.StaticCache = struct('Box',[NaN NaN NaN NaN], 'Indices',zeros(1,0));
 end
+if ~isfield(selectorState,'Levels')
+    selectorState.Levels = containers.Map('KeyType','char','ValueType','double');
+end
+if ~isfield(selectorState,'SizeCache')
+    selectorState.SizeCache = containers.Map('KeyType','char','ValueType','any');
+end
+previousLevels = selectorState.Levels;
+meshSet = options.MeshSet;
 previousTiers = selectorState.Tiers;
 
 % The camera, as a structure (or [])
@@ -245,7 +294,7 @@ if strcmp(regionUsed,'cameraView')
 else
     [centerXY, centerYaw] = fcn_INTERNAL_center(criteria.Center, catalog, sceneTime, camera, selectorState.LoadedMotions);
 end
-farDistance = criteria.FarDistance;
+farDistance = criteria.MaxDistance;
 switch regionUsed
     case 'cameraView'
         referencePoint = camera.Position;
@@ -345,11 +394,36 @@ switch regionUsed
 end
 flagInRegion = flagInside | flagAlwaysCandidate;
 
-%%%% 4. Tiers
+%%%% 4. Size on screen
+% Each candidate's D and box center (in its own frame), by mesh
+candidateMeshIDs = {objects(candidates).MeshID};
+[sizeDiagonals, boxCenters, levelSizes, selectorState.SizeCache] = fcn_INTERNAL_meshSizes(candidateMeshIDs, ...
+    objects(candidates), meshSet, selectorState.SizeCache);
+% The box centers in the global frame (turned by yaw only: close enough
+% for a distance)
+centerX = poses(:,1)' + cos(poses(:,6)').*boxCenters(:,1)' - sin(poses(:,6)').*boxCenters(:,2)';
+centerY = poses(:,2)' + sin(poses(:,6)').*boxCenters(:,1)' + cos(poses(:,6)').*boxCenters(:,2)';
+centerZ = poses(:,3)' + boxCenters(:,3)';
+if ~isempty(camera)
+    eyePoint = camera.Position;
+    pixelScale = camera.Pixels/(2*tand(camera.ViewAngle/2));
+else
+    eyePoint = referencePoint;
+    pixelScale = criteria.NominalScale;
+end
+eyeDistances = sqrt((centerX - eyePoint(1)).^2 + (centerY - eyePoint(2)).^2 + (centerZ - eyePoint(3)).^2);
+eyeDistances = max(eyeDistances, sizeDiagonals'/2);     % inside the box: as large as it gets
+screenSizes = sizeDiagonals'*pixelScale./eyeDistances;
+
+% Beyond MaxDistance is not drawn (the region tests use their own
+% distances; this bounds them all)
+flagInRegion = flagInRegion & (eyeDistances <= farDistance*(1 + hysteresis*flagWasShown) | flagAlwaysCandidate);
+
+%%%% 5. Tiers
 tier = zeros(1,Ncandidates);   % 0: not drawn
 candidateRoles = roles(candidates);
 [~, simpleIDs] = fcn_AnimateCar3D_fillSimpleShape('', FigNum=-1);
-flagBox = ismember(lower({objects(candidates).MeshID}), simpleIDs);   % simple shapes: far tier only
+flagBox = ismember(lower(candidateMeshIDs), simpleIDs);   % simple shapes: far tier only
 
 % Fixed tiers first (not counted against the tier counts)
 for ith_fixed = 1:size(criteria.FixedTiers,1)
@@ -358,24 +432,53 @@ for ith_fixed = 1:size(criteria.FixedTiers,1)
 end
 tier(tier>0 & flagBox) = 3;
 
-% Then by distance, nearest first, with hysteresis
-tierDistances = [criteria.NearDistance criteria.MiddleDistance farDistance];
+% Then by size on screen, largest first, with hysteresis
+tierSizes = [criteria.TopScreenSize criteria.MergeBelowSize criteria.MinScreenSize];
 tierCounts = [criteria.NearCount criteria.MiddleCount criteria.FarCount];
 for ith_tier = 1:3
     flagStillOpen = tier==0 & flagInRegion & (~flagBox | ith_tier==3);
     keepsTier = previousTier>0 & previousTier<=ith_tier;
-    effectiveDistance = distances ./ (1 + hysteresis*keepsTier);
-    flagQualifies = flagStillOpen & effectiveDistance <= tierDistances(ith_tier);
+    effectiveSize = screenSizes .* (1 + hysteresis*keepsTier);
+    flagQualifies = flagStillOpen & effectiveSize >= tierSizes(ith_tier);
     qualifying = find(flagQualifies);
-    [~, order] = sort(effectiveDistance(qualifying));
+    [~, order] = sort(effectiveSize(qualifying), 'descend');
     chosen = qualifying(order(1:min(numel(order), tierCounts(ith_tier))));
     tier(chosen) = ith_tier;
 end
+numTooSmall = sum(tier==0 & flagInRegion & ~flagAlwaysCandidate);
 
-% Always-shown objects that got no tier are drawn as far boxes
+% Always-shown objects that got no tier are drawn far
 tier(tier==0 & flagAlwaysCandidate) = 3;
 
-%%%% 5. States of the drawn objects, and 6. their styles
+%%%% 6. Detail levels of middle and far vehicles
+level = nan(1,Ncandidates);
+level(tier==1) = 0;
+for ith_candidate = find(tier>=2 & ~cellfun(@isempty, levelSizes'))
+    maxSizes = levelSizes{ith_candidate};
+    thisLevel = find(maxSizes >= screenSizes(ith_candidate), 1, 'last');
+    if isempty(thisLevel)
+        thisLevel = 0;                      % larger than the ladder's top: the full mesh
+    end
+    instanceName = objectNames{candidates(ith_candidate)};
+    if isKey(previousLevels, instanceName)
+        previousLevel = previousLevels(instanceName);
+        if previousLevel < thisLevel && screenSizes(ith_candidate)*(1 + hysteresis) > maxSizes(previousLevel+1)
+            thisLevel = previousLevel;      % shrinking: keep the finer level a little longer
+        end
+    end
+    if tier(ith_candidate)==3
+        thisLevel = max(thisLevel, 1);      % merged objects use levels, never the full mesh
+        % Merged only because the middle count was full? No finer than the
+        % level made for MergeBelowSize (bounds the merged patch's faces)
+        mergeLevel = find(maxSizes >= criteria.MergeBelowSize, 1, 'last');
+        if ~isempty(mergeLevel)
+            thisLevel = max(thisLevel, mergeLevel);
+        end
+    end
+    level(ith_candidate) = thisLevel;
+end
+
+%%%% 7. States of the drawn objects, and 8. their styles
 drawn = find(tier>0);
 drawnIndices = candidates(drawn);
 drawnTiers = {'near','middle','far'};
@@ -420,18 +523,24 @@ end
 displayList = fcn_AnimateCar3D_fillDisplayList(Time=sceneTime, Instance=objectNames(drawnIndices), ...
     MeshID={objects(drawnIndices).MeshID}, Pose=drawnPoses, Tier=drawnTiers, WheelSpin=wheelSpin, ...
     SteerAngle=steerAngle, WheelLift=wheelLift, BodyRoll=bodyMotion(:,1), BodyPitch=bodyMotion(:,2), ...
-    BodyHeave=bodyMotion(:,3), LightStates=lightInput, Color=colors, Alpha=alphas, Size=sizes, FigNum=-1);
+    BodyHeave=bodyMotion(:,3), LightStates=lightInput, Color=colors, Alpha=alphas, Size=sizes, ...
+    Level=level(drawn)', ScreenSize=screenSizes(drawn)', FigNum=-1);
 
 % Remember this step's tiers; who entered and who left
 newTiers = containers.Map('KeyType','char','ValueType','double');
+newLevels = containers.Map('KeyType','char','ValueType','double');
 for ith_drawn = 1:Ndrawn
     newTiers(objectNames{drawnIndices(ith_drawn)}) = tier(drawn(ith_drawn));
+    if ~isnan(level(drawn(ith_drawn)))
+        newLevels(objectNames{drawnIndices(ith_drawn)}) = level(drawn(ith_drawn));
+    end
 end
+selectorState.Levels = newLevels;
 selectorState.Entered = setdiff(newTiers.keys, previousTiers.keys);
 selectorState.Left = setdiff(previousTiers.keys, newTiers.keys);
 selectorState.Tiers = newTiers;
 selectorState.Stats = struct('NumCandidates',Ncandidates, 'NumNear',sum(tier==1), 'NumMiddle',sum(tier==2), ...
-    'NumFar',sum(tier==3), 'RegionUsed',regionUsed, 'SelectSeconds',toc(selectTimer));
+    'NumFar',sum(tier==3), 'NumTooSmall',numTooSmall, 'RegionUsed',regionUsed, 'SelectSeconds',toc(selectTimer));
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -484,8 +593,8 @@ if flag_do_plots
     xlabel('X [m]');
     ylabel('Y [m]');
     legend('Location','bestoutside');
-    title(sprintf('Selection at t = %.2f s (%s): %d near, %d middle, %d far', sceneTime, regionUsed, ...
-        selectorState.Stats.NumNear, selectorState.Stats.NumMiddle, selectorState.Stats.NumFar));
+    title(sprintf('Selection at t = %.2f s (%s): %d near, %d middle, %d far, %d too small', sceneTime, regionUsed, ...
+        selectorState.Stats.NumNear, selectorState.Stats.NumMiddle, selectorState.Stats.NumFar, selectorState.Stats.NumTooSmall));
 end
 
 if flag_do_debug
@@ -518,7 +627,8 @@ if isgraphics(cameraInput,'axes')
     axesPixels = getpixelposition(cameraInput);
     camera = struct('Position', get(cameraInput,'CameraPosition'), 'Target', get(cameraInput,'CameraTarget'), ...
         'UpVector', get(cameraInput,'CameraUpVector'), 'ViewAngle', get(cameraInput,'CameraViewAngle'), ...
-        'AspectRatio', axesPixels(3)/max(axesPixels(4),1));
+        'AspectRatio', axesPixels(3)/max(axesPixels(4),1), 'Pixels', max(min(axesPixels(3:4)),1));
+    % (MATLAB's CameraViewAngle spans the axes' smaller side)
 else
     camera = cameraInput;
     if ~isfield(camera,'UpVector') || isempty(camera.UpVector)
@@ -526,6 +636,9 @@ else
     end
     if ~isfield(camera,'AspectRatio') || isempty(camera.AspectRatio)
         camera.AspectRatio = 16/9;
+    end
+    if ~isfield(camera,'Pixels') || isempty(camera.Pixels)
+        camera.Pixels = 450;
     end
 end
 camera.Position = camera.Position(:)';
@@ -620,11 +733,71 @@ objectAngle = atand(halfLengths ./ max(depth, 0.1));   % how wide the object loo
 halfH = (camera.HalfAngles(1) + criteria.ViewMargin).*growth + objectAngle;
 halfV = (camera.HalfAngles(2) + criteria.ViewMargin).*growth + objectAngle;
 flagInside = depth > 0 & abs(atand(sideways./depth)) <= halfH & abs(atand(upward./depth)) <= halfV ...
-    & distances <= criteria.FarDistance.*growth;
+    & distances <= criteria.MaxDistance.*growth;
 % Objects just behind or beside a close camera can still show at the
 % screen's edge: keep anything within its own length of the camera
 flagInside = flagInside | distances <= 2*halfLengths;
 end % Ends fcn_INTERNAL_inView
+
+%% fcn_INTERNAL_meshSizes
+function [sizeDiagonals, boxCenters, levelSizes, sizeCache] = fcn_INTERNAL_meshSizes(meshIDs, theseObjects, meshSet, sizeCache)
+% Each object's D, its box center in its own frame, and its levels'
+% MaxScreenSize (or [] if it has no levels). Mesh values are cached by
+% mesh ID; simple shapes and objects with their own Size are scaled.
+N = numel(meshIDs);
+sizeDiagonals = zeros(N,1);
+boxCenters = zeros(N,3);
+levelSizes = cell(N,1);
+typicalCar = [4.5 1.8 1.5];
+[uniqueIDs, ~, idIndex] = unique(meshIDs);
+for ith_id = 1:numel(uniqueIDs)
+    thisID = uniqueIDs{ith_id};
+    fieldName = matlab.lang.makeValidName(thisID);
+    flagInSet = ~isempty(meshSet) && isfield(meshSet, fieldName);
+    if isKey(sizeCache, thisID) && (sizeCache(thisID).FromMeshSet || ~flagInSet)
+        cached = sizeCache(thisID);
+    else
+        cached = struct('FromMeshSet',flagInSet, 'D',norm(typicalCar), 'Center',[0.3*typicalCar(1) 0 typicalCar(3)/2], ...
+            'Size',typicalCar, 'IsShape',false, 'LevelSizes',[]);
+        if flagInSet
+            entry = meshSet.(fieldName);
+            cached.D = entry.SizeDiagonal;
+            cached.Center = entry.BoxCenter(:)';
+            cached.Size = entry.Size;
+            cached.IsShape = ~isempty(entry.Shape);
+            if ~isempty(entry.Levels)
+                cached.LevelSizes = [entry.Levels.MaxScreenSize];
+            end
+        else
+            [~, simpleIDs] = fcn_AnimateCar3D_fillSimpleShape('', FigNum=-1);
+            if any(strcmpi(thisID, simpleIDs))
+                % A simple shape: its box, from the shape itself (cheap: no mesh)
+                shapeSet = fcn_AnimateCar3D_loadMeshes(lower(thisID), FigNum=-1);
+                entry = shapeSet.(lower(thisID));
+                cached.D = entry.SizeDiagonal;
+                cached.Center = entry.BoxCenter;
+                cached.Size = entry.Size;
+                cached.IsShape = true;
+            end
+        end
+        sizeCache(thisID) = cached;
+    end
+    rows = find(idIndex==ith_id);
+    for ith_row = rows(:)'
+        objectSize = theseObjects(ith_row).Size;
+        if (cached.IsShape || ~cached.FromMeshSet) && all(isfinite(objectSize)) && all(objectSize>0)
+            % Its own size: scale the box
+            ratio = objectSize(:)'./cached.Size;
+            sizeDiagonals(ith_row) = norm(objectSize);
+            boxCenters(ith_row,:) = cached.Center.*ratio;
+        else
+            sizeDiagonals(ith_row) = cached.D;
+            boxCenters(ith_row,:) = cached.Center;
+        end
+        levelSizes{ith_row} = cached.LevelSizes;
+    end
+end
+end % Ends fcn_INTERNAL_meshSizes
 
 %% fcn_INTERNAL_styles
 function [colors, alphas] = fcn_INTERNAL_styles(objects, drawnIndices, criteria)

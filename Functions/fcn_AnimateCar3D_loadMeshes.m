@@ -2,20 +2,35 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 % fcn_AnimateCar3D_loadMeshes
 
 % Loads the vehicle meshes a scene needs, once, before animating. Each
-% mesh is kept at two levels of detail, for the scene player's tiers:
+% vehicle is kept as its full mesh and its ladder of detail levels from
+% CarMesh3D (fcn_CarMesh3D_loadDetailLevels), with the sizes the
+% selector needs to work out how big it is on screen:
 %
-%   Full   the finished CarMesh3D mesh (near tier: wheels, lights)
-%   Low    the same mesh simplified to a few hundred faces (middle tier)
+%   Full     the finished CarMesh3D mesh (drawn while the vehicle is
+%            larger than TopScreenSize on screen: wheels, lights, body
+%            motion)
+%   Levels   reduced meshes, each made for a largest size on screen
+%            (MaxScreenSize, pixels), from finest to coarsest; the last
+%            is a box
 %
-% and the vehicle's size, for drawing it as a box (far tier).
+% A vehicle with no levels file has its levels made here (a few
+% seconds; CarMesh3D warns, CarMesh3D:detailLevelsMade). Save them with
+% the vehicle by running its CarMesh3D vehicle script, Step 6b.
+%
+% The sample car has no vehicle folder, so its mesh and levels are made
+% once and kept in a cache file in MATLAB's temporary folder
+% (AnimateCar3D_sampleMeshCache.mat), named by the CarMesh3D copy in use.
+% The cache is used while its CarMesh3D copy, levels format, and levels
+% maker match; otherwise it is made again.
 %
 % Meshes are named by their CarMesh3D vehicle ID (the Data folder name,
 % YEAR_Make_Model_Trimline), 'sample' for CarMesh3D's built-in sample
 % car scaled to a generic sedan, or a simple shape: 'box', 'bar',
 % 'cylinder', or 'pedestrian' (see fcn_AnimateCar3D_fillSimpleShape), for
 % static objects, pedestrians, moving items, and vehicles known only by
-% their size. Simple shapes are always drawn the far tier's way (all in
-% one patch), sized by their display list Size (or their default size).
+% their size. Simple shapes have no levels: they are always drawn merged
+% (all in one patch), sized by their display list Size (or their default
+% size).
 %
 % While a live animation runs, new mesh IDs can appear: give the mesh
 % set already loaded as MeshSet, and only the new meshes are loaded.
@@ -23,7 +38,7 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 % FORMAT:
 %
 %       meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs,...
-%           (LowFaces=numFaces), (MeshSet=meshSet), (FigNum=figNum))
+%           (MeshSet=meshSet), (SampleCacheFile=file), (FigNum=figNum))
 %
 %      Optional inputs are given as Name=Value pairs after the required
 %      inputs, in any order. Any option not given takes its default.
@@ -36,14 +51,16 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
-%      LowFaces: the face count of the low-detail meshes. Default 400.
-%      (The count is a target: the result can be somewhat higher.)
-%
 %      MeshSet: a mesh set from an earlier call. The new IDs are added to
 %      it; IDs it already has are not loaded again. Default [].
 %
-%      FigNum: a figure number to show each mesh at both detail levels.
-%      Empty (default) for no figure; -1 for fast mode (no input checks).
+%      SampleCacheFile: the sample car's cache file. Default
+%      fullfile(tempdir, 'AnimateCar3D_sampleMeshCache.mat'); '' for no
+%      cache (made every time).
+%
+%      FigNum: a figure number to show each vehicle's full mesh and its
+%      levels. Empty (default) for no figure; -1 for fast mode (no input
+%      checks).
 %
 % OUTPUTS:
 %
@@ -52,13 +69,22 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 %      matlab.lang.makeValidName (for example, x2013_Toyota_Prius_Four),
 %      and each field holds:
 %           ID: the vehicle ID
-%           Full: the finished mesh
-%           Low: the low-detail mesh
+%           Full: the finished mesh ([] for a simple shape)
+%           Levels: the detail levels (from CarMesh3D), a structure array
+%               with fields MaxScreenSize, Faces, IsBox, and Mesh ([] for
+%               the box); 0 x 1 for a simple shape
 %           Size: [length width height] in meters
 %           RearOverhang: rear axle to rear bumper, in meters (places the
 %               box: the vehicle origin is on the ground below the rear
 %               axle)
-%           FullFaces, LowFaces: face counts
+%           SizeDiagonal: D, the diagonal of the bounding box in the
+%               object's own frame, meters (the size-on-screen standard)
+%           BoxCenter: the center of that box in the object's own frame
+%               (distances on screen are measured to it)
+%           TopScreenSize: the largest size on screen the levels were
+%               made for (above it, the full mesh is drawn)
+%           FullFaces: the full mesh's face count; LevelFaces: each
+%               level's
 %           Shape: for a simple shape, the shape (from
 %               fcn_AnimateCar3D_fillSimpleShape); [] for a vehicle
 %      meshSet.IDs lists the IDs in the order given (simple shape names
@@ -67,6 +93,7 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 % DEPENDENCIES:
 %
 %      CarMesh3D: fcn_CarMesh3D_findVehicleFiles,
+%      fcn_CarMesh3D_loadDetailLevels, fcn_CarMesh3D_makeDetailLevels,
 %      fcn_CarMesh3D_simplifyMesh, fcn_CarMesh3D_fillVehicleSpec,
 %      fcn_CarMesh3D_fillSampleMesh, fcn_CarMesh3D_labelParts,
 %      fcn_CarMesh3D_fitMeshToSpec, fcn_CarMesh3D_plotVehicle
@@ -88,13 +115,22 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_loadMeshes
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_loadMeshes
+%   % * Loads each vehicle's detail levels from CarMesh3D
+%   %   % (fcn_CarMesh3D_loadDetailLevels; made if missing), with
+%   %   % SizeDiagonal, BoxCenter, and TopScreenSize, in place of one
+%   %   % low-detail mesh made with fcn_CarMesh3D_simplifyMesh. Removed the
+%   %   % LowFaces option and the Low and LowFaces fields
+%   % * The sample car's mesh and levels are kept in a cache file
+%   %   % (SampleCacheFile, in MATLAB's temporary folder)
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_loadMeshes
-%   % * Save the low-detail mesh with each vehicle in CarMesh3D, so it is not
-%   %   % remade every time
+%   % * (fill in items here)
 
 
 
@@ -106,8 +142,8 @@ function meshSet = fcn_AnimateCar3D_loadMeshes(meshIDs, options)
 arguments
 
     meshIDs
-    options.LowFaces = 400    % faces in the low-detail (middle tier) meshes
     options.MeshSet = []      % an existing mesh set to add to
+    options.SampleCacheFile = fullfile(tempdir, 'AnimateCar3D_sampleMeshCache.mat')   % '' for no cache
     options.FigNum = []       % figure to show the meshes; -1 for fast mode
 end
 
@@ -165,14 +201,14 @@ if 0==flag_max_speed
             error('meshIDs must be a vehicle ID or a cell array of vehicle IDs');
         end
 
+        % Check the SampleCacheFile input
+        if ~(ischar(options.SampleCacheFile) || isstring(options.SampleCacheFile))
+            error('SampleCacheFile must be a file name, or '''' for no cache');
+        end
+
         % Check the MeshSet input
         if ~isempty(options.MeshSet) && ~(isstruct(options.MeshSet) && isfield(options.MeshSet,'IDs'))
             error('MeshSet must come from fcn_AnimateCar3D_loadMeshes');
-        end
-
-        % Check the LowFaces input
-        if ~isnumeric(options.LowFaces) || ~isscalar(options.LowFaces) || options.LowFaces<20
-            error('LowFaces must be a number of 20 or more');
         end
     end
 end
@@ -211,25 +247,27 @@ else
 end
 meshIDs = setdiff(meshIDs(:)', meshSet.IDs, 'stable');
 meshSet.IDs = [meshSet.IDs, meshIDs];
+noLevels = struct('MaxScreenSize',{}, 'Faces',{}, 'IsBox',{}, 'Mesh',{});
 for ith_mesh = 1:length(meshIDs)
     thisID = meshIDs{ith_mesh};
 
-    % A simple shape (box, bar, cylinder, pedestrian): no mesh; its
-    % default size, and its origin where the shape puts it
+    % A simple shape (box, bar, cylinder, pedestrian): no mesh and no
+    % levels; its default size, its origin where the shape puts it, and
+    % its box (from the shape's corners at that size)
     if any(strcmp(thisID, simpleIDs))
         shape = fcn_AnimateCar3D_fillSimpleShape(thisID, FigNum=-1);
-        meshSet.(thisID) = struct('ID',thisID, 'Full',[], 'Low',[], 'Size',shape.DefaultSize, ...
-            'RearOverhang',shape.RearFraction*shape.DefaultSize(1), 'FullFaces',0, 'LowFaces',0, 'Shape',shape);
+        corners = shape.Vertices .* shape.DefaultSize;   % x = length*(unit x + RearFraction) - overhang = length*unit x
+        cornerLow = min(corners,[],1);
+        cornerHigh = max(corners,[],1);
+        meshSet.(thisID) = struct('ID',thisID, 'Full',[], 'Levels',noLevels, 'Size',shape.DefaultSize, ...
+            'RearOverhang',shape.RearFraction*shape.DefaultSize(1), 'SizeDiagonal',norm(cornerHigh-cornerLow), ...
+            'BoxCenter',(cornerLow+cornerHigh)/2, 'TopScreenSize',Inf, 'FullFaces',0, 'LevelFaces',zeros(1,0), 'Shape',shape);
         continue;
     end
 
-    % The full mesh
+    % The full mesh, and its levels
     if strcmpi(thisID,'sample')
-        vehicleSpec = fcn_CarMesh3D_fillVehicleSpec(Preset='genericSedan', FigNum=-1);
-        fullMesh = fcn_CarMesh3D_fillSampleMesh(VehicleSpec=vehicleSpec, FigNum=-1);
-        fullMesh = fcn_CarMesh3D_labelParts(fullMesh, FigNum=-1);
-        fullMesh = fcn_CarMesh3D_fitMeshToSpec(fullMesh, vehicleSpec, FigNum=-1);
-        fullMesh = fcn_CarMesh3D_simplifyMesh(fullMesh, FigNum=-1);
+        [fullMesh, detailLevels] = fcn_INTERNAL_sampleMesh(char(options.SampleCacheFile));
     else
         vehicleFiles = fcn_CarMesh3D_findVehicleFiles(thisID, FigNum=-1);
         if ~vehicleFiles.HasMesh
@@ -237,13 +275,7 @@ for ith_mesh = 1:length(meshIDs)
         end
         loaded = load(vehicleFiles.MeshFile, 'vehicleMesh');
         fullMesh = loaded.vehicleMesh;
-    end
-
-    % The low-detail mesh
-    if size(fullMesh.Faces,1) > options.LowFaces
-        lowMesh = fcn_CarMesh3D_simplifyMesh(fullMesh, TargetFaces=options.LowFaces, FigNum=-1);
-    else
-        lowMesh = fullMesh;
+        detailLevels = fcn_CarMesh3D_loadDetailLevels(thisID, MakeIfMissing=true, FigNum=-1);
     end
 
     % The size, from the mesh itself (so the box matches what is drawn)
@@ -253,11 +285,14 @@ for ith_mesh = 1:length(meshIDs)
     entry = struct;
     entry.ID = thisID;
     entry.Full = fullMesh;
-    entry.Low = lowMesh;
+    entry.Levels = detailLevels.Levels;
     entry.Size = vertexMax - vertexMin;
     entry.RearOverhang = -vertexMin(1);
+    entry.SizeDiagonal = detailLevels.SizeDiagonal;
+    entry.BoxCenter = detailLevels.BoxCenter(:)';
+    entry.TopScreenSize = detailLevels.TopScreenSize;
     entry.FullFaces = size(fullMesh.Faces,1);
-    entry.LowFaces = size(lowMesh.Faces,1);
+    entry.LevelFaces = [detailLevels.Levels.Faces];
     entry.Shape = [];
     meshSet.(matlab.lang.makeValidName(thisID)) = entry;
 end
@@ -279,16 +314,23 @@ if flag_do_plots
     clf;
     plotIDs = meshSet.IDs(~ismember(meshSet.IDs, simpleIDs));
     Nmeshes = length(plotIDs);
+    Ncolumns = 1 + max([0, cellfun(@(id) sum(~[meshSet.(matlab.lang.makeValidName(id)).Levels.IsBox]), plotIDs)]);
+    tiledlayout(max(Nmeshes,1), Ncolumns, 'TileSpacing','compact', 'Padding','compact');
     for ith_mesh = 1:Nmeshes
         entry = meshSet.(matlab.lang.makeValidName(plotIDs{ith_mesh}));
-        detailNames = {'Full','Low'};
-        for ith_detail = 1:2
-            subplot(Nmeshes, 2, 2*(ith_mesh-1)+ith_detail);
-            fcn_CarMesh3D_plotVehicle(entry.(detailNames{ith_detail}), FigNum=-1);
+        meshLevels = entry.Levels(~[entry.Levels.IsBox]);
+        for ith_column = 1:1+numel(meshLevels)
+            nexttile((ith_mesh-1)*Ncolumns + ith_column);
+            if ith_column==1
+                fcn_CarMesh3D_plotVehicle(entry.Full, FigNum=-1);
+                titleText = sprintf('%s: full (%d faces)', strrep(entry.ID,'_',' '), entry.FullFaces);
+            else
+                fcn_CarMesh3D_plotVehicle(meshLevels(ith_column-1).Mesh, FigNum=-1);
+                titleText = sprintf('to %.0f px (%d)', meshLevels(ith_column-1).MaxScreenSize, meshLevels(ith_column-1).Faces);
+            end
             axis equal off;
             view(-35,20);
-            title(sprintf('%s: %s detail (%d faces)', strrep(entry.ID,'_',' '), lower(detailNames{ith_detail}), ...
-                size(entry.(detailNames{ith_detail}).Faces,1)), 'FontSize', 9);
+            title(titleText, 'FontSize', 8);
         end
     end
 end
@@ -311,4 +353,47 @@ end % Ends main function
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% (none)
+%% fcn_INTERNAL_sampleMesh
+function [fullMesh, detailLevels] = fcn_INTERNAL_sampleMesh(cacheFile)
+% The sample car and its levels, from the cache file if it was made by
+% the same CarMesh3D copy, levels format, and levels maker; else made
+% (about 3 s) and saved
+makerFile = which('fcn_CarMesh3D_makeDetailLevels');
+carMesh3DRoot = fileparts(fileparts(makerFile));
+[~, carMesh3DName] = fileparts(carMesh3DRoot);
+cacheKey = struct('CarMesh3DName',carMesh3DName, 'CarMesh3DRoot',carMesh3DRoot, ...
+    'MakerDate',fcn_INTERNAL_fileDate(makerFile));
+if ~isempty(cacheFile) && isfile(cacheFile)
+    try
+        cached = load(cacheFile, 'cacheKey', 'fullMesh', 'detailLevels');
+        if isequal(cached.cacheKey, cacheKey) && isfield(cached.detailLevels,'FormatVersion') ...
+                && cached.detailLevels.FormatVersion==1
+            fullMesh = cached.fullMesh;
+            detailLevels = cached.detailLevels;
+            return;
+        end
+    catch
+        % (an unreadable cache is made again)
+    end
+end
+vehicleSpec = fcn_CarMesh3D_fillVehicleSpec(Preset='genericSedan', FigNum=-1);
+fullMesh = fcn_CarMesh3D_fillSampleMesh(VehicleSpec=vehicleSpec, FigNum=-1);
+fullMesh = fcn_CarMesh3D_labelParts(fullMesh, FigNum=-1);
+fullMesh = fcn_CarMesh3D_fitMeshToSpec(fullMesh, vehicleSpec, FigNum=-1);
+fullMesh = fcn_CarMesh3D_simplifyMesh(fullMesh, FigNum=-1);
+detailLevels = fcn_CarMesh3D_makeDetailLevels(fullMesh, FigNum=-1);
+if ~isempty(cacheFile)
+    try
+        save(cacheFile, 'cacheKey', 'fullMesh', 'detailLevels');
+    catch
+        % (a folder that cannot be written: no cache)
+    end
+end
+end % Ends fcn_INTERNAL_sampleMesh
+
+%% fcn_INTERNAL_fileDate
+function fileDate = fcn_INTERNAL_fileDate(fileName)
+% A file's modification time (so a changed levels maker remakes the cache)
+fileInfo = dir(fileName);
+fileDate = fileInfo.datenum;
+end % Ends fcn_INTERNAL_fileDate

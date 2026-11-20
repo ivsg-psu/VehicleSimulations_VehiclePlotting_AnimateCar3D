@@ -20,7 +20,7 @@
 %% Set up the workspace
 close all
 
-criteria = fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=40);
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(TopScreenSize=120);
 
 %% Code demos start here
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -70,7 +70,7 @@ assert(strcmp(newCriteria.Region,'circle') && newCriteria.Radius==45);
 assert(isequal(newCriteria.RolesShown, {'ego','confederate','traffic'}));
 assert(isequal(newCriteria.BoxSize, [120 40]) && newCriteria.HideParentAtSplit==false);
 assert(isequal(newCriteria.FixedTiers, {'ego','near';'confederate','middle'}));
-assert(newCriteria.NearDistance==40);            % kept from before
+assert(newCriteria.TopScreenSize==120);          % kept from before
 assert(isequal(sort(changedNames), sort({'Region','Radius','RolesShown','BoxSize','HideParentAtSplit','FixedTiers'})));
 delete(criteriaFile);
 
@@ -99,8 +99,8 @@ titleString = sprintf('TEST case: Changes from a structure; a fixed center from 
 fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
 figure(figNum); close(figNum);
 
-newCriteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('FarDistance',150, 'Center',[10 20]));
-assert(newCriteria.FarDistance==150 && isequal(newCriteria.Center,[10 20]) && newCriteria.NearDistance==40);
+newCriteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('MaxDistance',150, 'Center',[10 20]));
+assert(newCriteria.MaxDistance==150 && isequal(newCriteria.Center,[10 20]) && newCriteria.TopScreenSize==120);
 criteriaFile = [tempname '.txt'];
 writelines(["Center = 5, -3"; "Hysteresis = 0.2"], criteriaFile);
 newCriteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, criteriaFile);
@@ -123,7 +123,7 @@ warningState = warning('off','AnimateCar3D:criteriaNotChanged');
 [sameCriteria, changedNames] = fcn_AnimateCar3D_changeDisplayCriteria(criteria, criteriaFile, OnError='warn');
 warning(warningState);
 assert(isequal(sameCriteria, criteria) && isempty(changedNames));
-writelines("NearDistance = -5", criteriaFile);                    % a bad value
+writelines("MergeBelowSize = -5", criteriaFile);                  % a bad value
 warningState = warning('off','AnimateCar3D:criteriaNotChanged');
 sameCriteria = fcn_AnimateCar3D_changeDisplayCriteria(criteria, criteriaFile, OnError='warn');
 warning(warningState);
@@ -171,5 +171,5 @@ end
 
 %% FAIL case: A bad value
 if 1==0
-    fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('NearDistance',-5));
+    fcn_AnimateCar3D_changeDisplayCriteria(criteria, struct('MergeBelowSize',-5));
 end

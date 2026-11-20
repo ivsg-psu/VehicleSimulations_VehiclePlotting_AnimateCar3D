@@ -110,6 +110,14 @@ assert(isempty(displayList.Boxes.Instance));
 figHandles = get(groot, 'Children');
 assert(~any(figHandles==figNum));
 
+%% TEST case: Levels and sizes on screen
+displayList = fcn_AnimateCar3D_fillDisplayList(Instance={'a','b','c'}, MeshID='sample', Pose=zeros(3,3), ...
+    Tier={'near','middle','far'}, Level=[0; 2; NaN], ScreenSize=[150; 60; 12]);
+assert(isequal([displayList.Objects.Level], [0 2]) && isequal([displayList.Objects.ScreenSize], [150 60]));
+assert(isnan(displayList.Boxes.Level) && displayList.Boxes.ScreenSize==12);
+displayList = fcn_AnimateCar3D_fillDisplayList(Instance='d', MeshID='sample', Pose=[0 0 0], Tier='middle');
+assert(isnan(displayList.Objects.Level) && isnan(displayList.Objects.ScreenSize));
+
 %% TEST case: Simple shapes are always far
 displayList = fcn_AnimateCar3D_fillDisplayList(Instance={'b','v','p'}, MeshID={'box','sample','Pedestrian'}, ...
     Pose=zeros(3,3), Size=[10 5 3; NaN NaN NaN; NaN NaN NaN]);

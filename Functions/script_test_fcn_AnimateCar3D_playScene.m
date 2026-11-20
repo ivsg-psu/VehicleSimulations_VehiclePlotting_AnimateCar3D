@@ -1,6 +1,6 @@
 % script_test_fcn_AnimateCar3D_playScene.m
 % Tests fcn_AnimateCar3D_playScene
-% Draws display lists step by step, reusing graphics, with detail tiers.
+% Draws display lists step by step, reusing graphics, with detail tiers and levels.
 %
 % Run script_demo_AnimateCar3D first, so that CarMesh3D is on the path.
 
@@ -20,7 +20,7 @@
 %% Set up the workspace
 close all
 
-meshSet = fcn_AnimateCar3D_loadMeshes('sample', LowFaces=200, FigNum=-1);
+meshSet = fcn_AnimateCar3D_loadMeshes('sample', FigNum=-1);
 
 %% Code demos start here
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -132,12 +132,98 @@ playerState = fcn_AnimateCar3D_playScene(redGhost, meshSet, FigNum=figNum);
 entry = playerState.Pool(1);
 assert(all(cellfun(@(p) get(p,'FaceAlpha'), entry.AllPatches) <= 0.3+1e-9));
 tintedColors = get(entry.TintPatches{1},'FaceVertexCData');
-assert(all(tintedColors(:,1) >= 0.75 - 1e-9));   % at least 75% red
+assert(all(tintedColors(entry.TintMasks{1},1) >= 0.75 - 1e-9));   % at least 75% red
 plain = fcn_AnimateCar3D_fillDisplayList(Instance='ghost', MeshID='sample', Pose=[0 0 0]);
 playerState = fcn_AnimateCar3D_playScene(plain, meshSet, PlayerState=playerState);
 entry = playerState.Pool(1);
 assert(isequal(get(entry.TintPatches{1},'FaceVertexCData'), entry.TintOriginal{1}));
 assert(max(cellfun(@(p) get(p,'FaceAlpha'), entry.AllPatches)) > 0.99);
+
+%% TEST case: Tint by part: opaque glass is not tinted
+figNum = 20003;
+titleString = sprintf('TEST case: Tint by part: opaque glass is not tinted');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); clf;
+
+% The sample car with opaque glass (as some downloaded models have): its
+% windows join the opaque body patch, and must still not be tinted
+opaqueSet = meshSet;
+glassPart = find(strcmp(opaqueSet.sample.Full.PartNames,'glass'));
+flagGlass = opaqueSet.sample.Full.FacePartIndex==glassPart;
+assert(any(flagGlass));
+opaqueSet.sample.Full.FaceAlpha(flagGlass) = 1;
+redCar = fcn_AnimateCar3D_fillDisplayList(Instance='red', MeshID='sample', Pose=[0 0 0], Color=[1 0 0]);
+playerState = fcn_AnimateCar3D_playScene(redCar, opaqueSet, FigNum=figNum);
+entry = playerState.Pool(1);
+allMasks = vertcat(entry.TintMasks{:});
+assert(any(~allMasks) && any(allMasks));        % some faces in the tinted patches are left alone
+for ith_patch = 1:numel(entry.TintPatches)
+    colorsNow = get(entry.TintPatches{ith_patch},'FaceVertexCData');
+    mask = entry.TintMasks{ith_patch};
+    assert(isequal(colorsNow(~mask,:), entry.TintOriginal{ith_patch}(~mask,:)));
+end
+fcn_AnimateCar3D_playScene([], opaqueSet, PlayerState=playerState, Action='clear');
+
+%% TEST case: Detail levels: separate objects switch levels; far objects merge
+figNum = 20004;
+titleString = sprintf('TEST case: Detail levels: separate objects switch levels; far objects merge');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); clf;
+fcn_CarMesh3D_plotScene(GroundExtent=[-20 120 -30 30], FigNum=figNum);
+view(-30,25);
+sampleLevels = meshSet.sample.Levels;
+Nlevels = numel(sampleLevels);
+
+% A middle car at level 2, then 3, then 2 again (reused)
+levelList = @(level) fcn_AnimateCar3D_fillDisplayList(Instance='mid', MeshID='sample', Pose=[10 0 0], Tier='middle', Level=level);
+playerState = fcn_AnimateCar3D_playScene(levelList(2), meshSet, FigNum=figNum);
+entry = playerState.Pool(strcmp({playerState.Pool.Instance},'mid'));
+assert(entry.Level==2);
+drawnFaces = sum(cellfun(@(p) size(get(p,'Faces'),1), entry.AllPatches));
+assert(drawnFaces == sampleLevels(2).Faces);
+playerState = fcn_AnimateCar3D_playScene(levelList(3), meshSet, PlayerState=playerState);
+assert(playerState.Stats.NumCreated==1 && playerState.Stats.NumHidden==1);
+playerState = fcn_AnimateCar3D_playScene(levelList(2), meshSet, PlayerState=playerState);
+assert(playerState.Stats.NumCreated==0 && playerState.Stats.NumReused==1);
+% With no Level, its ScreenSize picks the level
+sizeList = fcn_AnimateCar3D_fillDisplayList(Instance='mid', MeshID='sample', Pose=[10 0 0], Tier='middle', ...
+    ScreenSize=sampleLevels(3).MaxScreenSize - 1);
+playerState = fcn_AnimateCar3D_playScene(sizeList, meshSet, PlayerState=playerState);
+assert(playerState.Pool(strcmp({playerState.Pool.Instance},'mid')).Level == 3);
+
+% Far cars at three levels (and one box, and one tinted): the meshes are
+% merged into one patch, the box goes with the boxes
+farList = fcn_AnimateCar3D_fillDisplayList(Instance={'f1','f2','f3','f4','f5'}, MeshID='sample', ...
+    Pose=[40 0 0; 50 4 0; 60 -4 0; 70 0 0; 80 4 0], Tier='far', Level=[1; 2; NaN; Nlevels; 2], ...
+    ScreenSize=[NaN; NaN; sampleLevels(4).MaxScreenSize; NaN; NaN], Color=[NaN NaN NaN; NaN NaN NaN; NaN NaN NaN; NaN NaN NaN; 0 0 1]);
+playerState = fcn_AnimateCar3D_playScene(farList, meshSet, PlayerState=playerState);
+expectedFaces = sampleLevels(1).Faces + 2*sampleLevels(2).Faces + sampleLevels(4).Faces;
+assert(playerState.Stats.NumMergedFaces == expectedFaces);
+assert(size(get(playerState.MergedPatch,'Faces'),1) == expectedFaces);
+assert(size(get(playerState.BoxPatch,'Faces'),1) == 5);
+% The tinted car (f5, the last of the level-2 group): its glass is not
+% blue, its body is
+mergedColors = get(playerState.MergedPatch,'FaceVertexCData');
+level2Mesh = sampleLevels(2).Mesh;
+f5Rows = sampleLevels(1).Faces + sampleLevels(2).Faces + (1:sampleLevels(2).Faces);   % groups sorted: level 1, level 2 (f2, f5), level 4
+flagGlass2 = level2Mesh.FacePartIndex == find(strcmp(level2Mesh.PartNames,'glass'));
+flagBody2 = level2Mesh.FacePartIndex == find(strcmp(level2Mesh.PartNames,'body'));
+assert(isequal(mergedColors(f5Rows(flagGlass2),:), level2Mesh.FaceColors(flagGlass2,:)));
+assert(all(mergedColors(f5Rows(flagBody2),3) >= 0.75 - 1e-9));
+% Each merged car is placed at its pose (f1 at x = 40: its vertices span
+% the car from its rear overhang)
+mergedVertices = get(playerState.MergedPatch,'Vertices');
+f1Vertices = mergedVertices(1:size(sampleLevels(1).Mesh.Vertices,1),:);
+assert(abs(min(f1Vertices(:,1)) - (40 + min(sampleLevels(1).Mesh.Vertices(:,1)))) < 1e-9);
+% Every merged face is lit from outside: its corners run clockwise seen
+% from outside (MATLAB's way), so its right-hand normal points inward
+f1Faces = get(playerState.MergedPatch,'Faces');
+f1Faces = f1Faces(1:sampleLevels(1).Faces,:);
+rightHandNormals = cross(mergedVertices(f1Faces(:,2),:)-mergedVertices(f1Faces(:,1),:), mergedVertices(f1Faces(:,3),:)-mergedVertices(f1Faces(:,1),:), 2);
+assert(mean(sum(rightHandNormals.*sampleLevels(1).Mesh.FaceNormals,2) < 0) > 0.99);   % (f1 is not turned: yaw 0)
+% Nothing far: both patches hidden
+playerState = fcn_AnimateCar3D_playScene(levelList(2), meshSet, PlayerState=playerState);
+assert(strcmp(get(playerState.MergedPatch,'Visible'),'off') && strcmp(get(playerState.BoxPatch,'Visible'),'off'));
 
 %% TEST case: Clear deletes everything
 playerState = fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
@@ -149,7 +235,7 @@ figNum = 20005;
 titleString = sprintf('TEST case: Simple shapes: pedestrians, a raised gate arm, posts, and a far car');
 fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
 figure(figNum); clf;
-shapeSet = fcn_AnimateCar3D_loadMeshes({'sample','pedestrian','bar','cylinder'}, LowFaces=200, FigNum=-1);
+shapeSet = fcn_AnimateCar3D_loadMeshes({'sample','pedestrian','bar','cylinder'}, FigNum=-1);
 shapeList = fcn_AnimateCar3D_fillDisplayList(Instance={'walker1','walker2','gate','post','farCar'}, ...
     MeshID={'pedestrian','pedestrian','bar','cylinder','sample'}, Tier='far', ...
     Pose=[0 0 0 0 0 pi/2; 2 1 0 0 0 0; 5 -3 1 0 -pi/2 pi/2; 5 -3.4 0 0 0 0; 15 5 0 0 0 0], ...

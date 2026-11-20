@@ -4,15 +4,15 @@ Fast 3D animation of scenes with many vehicles in MATLAB: decision branches, sur
 
 AnimateCar3D builds on [CarMesh3D](https://github.com/ivsg-psu/VehicleSimulations_VehiclePlotting_CarMesh3D), which makes, views, and checks the mesh of one vehicle at a time. AnimateCar3D uses CarMesh3D's vehicle meshes and plotting functions, and adds everything needed for many objects in one scene.
 
-> **Status:** prototype (2026_11_19). Steps 0 to 4 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes. Next: [detail levels set by size on screen](#design-detail-levels-set-by-size-on-screen-planned) (designed, not yet built); a 2D (top-down) mode comes later.
+> **Status:** prototype (2026_11_20). Steps 0 to 5 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes; and each object's detail is set by its [size on screen](#detail-levels-set-by-size-on-screen-step-5), from a ladder of reduced meshes made by CarMesh3D (release `CarMesh3D_2026_11_20`). Next: a 2D (top-down) mode.
 
 | One vehicle splitting into ten decision branches | A confederate's three maneuvers, and the ego's three responses |
 |---|---|
 | ![Ten branches](Images/branching_tenChoices.gif) | ![Confederate and responses](Images/confederate_branchesAndResponses.gif) |
 
-| 300 vehicles from one traffic file, with a panning camera | 1000 vehicles at 20 steps per second |
+| 300 vehicles from one traffic file, with a panning camera | 1000 vehicles: the far ones merged, each at its detail level |
 |---|---|
-| ![Traffic and a panning camera](Images/traffic_cameraPan.gif) | ![Dense traffic](Images/frameRate_denseTraffic.png) |
+| ![Traffic and a panning camera](Images/traffic_cameraPan.gif) | ![1000 vehicles](Images/denseTraffic_1000vehicles.gif) |
 
 | Live data from a watched folder; the display criteria edited while running | Pedestrians at a crosswalk, and a parking gate that rises |
 |---|---|
@@ -43,7 +43,7 @@ Setting `ANIMATECAR3D_CARMESH3D_PATH` (for example `setenv('ANIMATECAR3D_CARMESH
 checkReport = fcn_AnimateCar3D_checkCarMesh3D(FigNum=1);   % table of results in figure 1
 ```
 
-It stops with an error that lists every failed check (or only reports them with `ThrowError=false`). It checks six things:
+It stops with an error that lists every failed check (or only reports them with `ThrowError=false`). It checks seven things:
 
 | Category | Checks that... |
 |---|---|
@@ -52,7 +52,8 @@ It stops with an error that lists every failed check (or only reports them with 
 | `motionColumns` | `fcn_CarMesh3D_saveMotionCSV` writes the 30 standard motion columns in order, and `fcn_CarMesh3D_loadMotionCSV` returns every field AnimateCar3D reads |
 | `meshFields` | a mesh made by the CarMesh3D workflow, and a finished mesh from its `Data` folder, have every field AnimateCar3D reads |
 | `plotting` | `fcn_CarMesh3D_plotVehicle` returns the handles AnimateCar3D moves, and moves the vehicle when called again with `PlotHandles` |
-| `vehicleFolders` | vehicle folders follow the `YEAR_Make_Model_Trimline` rules and file names, and the reference vehicle list has its columns |
+| `vehicleFolders` | vehicle folders follow the `YEAR_Make_Model_Trimline` rules and file names (including the levels file, `vehicleLevels_<ID>.mat`), and the reference vehicle list has its columns |
+| `detailLevels` | the detail levels (made from the sample car with `fcn_CarMesh3D_makeDetailLevels`, and a levels file read with `fcn_CarMesh3D_loadDetailLevels`) have the fields AnimateCar3D reads, in the format version it knows (1): levels from finest to coarsest, the last a box, each level's mesh with a finished mesh's fields |
 
 The full list (the "contract") is in `fcn_INTERNAL_defaultContract` inside the function. **When AnimateCar3D starts using another CarMesh3D function, option, or field, add it to the contract**, so that a later CarMesh3D change that breaks it is caught here first.
 
@@ -62,8 +63,8 @@ Four functions draw a scene step by step. The display list is the only thing the
 
 | Function | What it does |
 |---|---|
-| `fcn_AnimateCar3D_loadMeshes` | Loads each vehicle mesh once, at two levels of detail (the finished CarMesh3D mesh, and a low-detail copy of about 300 to 500 faces), with its size for far-tier boxes; also the simple shapes (step 4); `MeshSet=` adds to a set already loaded |
-| `fcn_AnimateCar3D_fillDisplayList` | Builds the display list for one time step: one row per object, with its mesh, pose, detail tier, wheel and body motion, lights, color tint, and opacity. `AppendTo=` adds to a list |
+| `fcn_AnimateCar3D_loadMeshes` | Loads each vehicle once: its finished CarMesh3D mesh and its ladder of detail levels (from `fcn_CarMesh3D_loadDetailLevels`; made if the vehicle has no levels file; the sample car's are kept in a cache file), with its size, D, and box center for sizes on screen; also the simple shapes (step 4); `MeshSet=` adds to a set already loaded |
+| `fcn_AnimateCar3D_fillDisplayList` | Builds the display list for one time step: one row per object, with its mesh, pose, detail tier and level, size on screen, wheel and body motion, lights, color tint, and opacity. `AppendTo=` adds to a list |
 | `fcn_AnimateCar3D_playScene` | Draws one display list, keeping the graphics from the step before |
 | `fcn_AnimateCar3D_fillBranchMotions` | Test motions: a parent vehicle that splits into decision branches partway through |
 
@@ -80,42 +81,68 @@ end
 fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
 ```
 
-**Detail tiers.** Each object in the display list has a tier:
+**Detail tiers and levels.** Each object in the display list has a tier, and middle and far objects a detail level (see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5)):
 
 | Tier | Drawn as | Moves |
 |---|---|---|
 | `near` | the full CarMesh3D mesh | everything `fcn_CarMesh3D_plotVehicle` does: wheels spin and steer, the body rolls, pitches, and heaves, lights switch |
-| `middle` | the low-detail mesh | pose only (its transform is set directly) |
-| `far` | a box of the vehicle's size (simple shapes: their own shape, at every distance) | all far objects are ONE patch whose vertices are updated each step, so a thousand boxes cost about as much as one vehicle |
+| `middle` | one of the vehicle's reduced meshes (its `Level`), as its own object | pose only (its transform is set directly) |
+| `far` | a reduced mesh, down to a box (simple shapes: their own shape, at every size) | all far objects are merged: the reduced meshes into ONE patch, boxes and simple shapes into another, with vertices updated each step, so thousands of far objects cost little |
 
-**Reuse.** When an object leaves the list, its graphics are hidden, not deleted, and the next object that arrives with the same mesh and tier takes them over. Hidden graphics unused for `IdleSteps` steps (default 120) are deleted. In the branching demo, the ego vehicle's graphics become one of the branches at the split.
+A middle or far object's `Level` is an index into its mesh's levels (the selector sets it); if it is NaN, the player takes the level made for its `ScreenSize`; with neither, a middle object gets the finest level and a far object a box.
 
-**Style.** `Color=` tints the body (not the glass, wheels, or lamps), and `Alpha=` makes the whole vehicle see-through. Both are reapplied only when they change.
+**Reuse.** When an object leaves the list, its graphics are hidden, not deleted, and the next object that arrives with the same mesh, tier, and level takes them over. An object whose level changes takes the graphics of its new level the same way. Hidden graphics unused for `IdleSteps` steps (default 120) are deleted. In the branching demo, the ego vehicle's graphics become one of the branches at the split.
+
+**Style.** `Color=` tints by part: every part but the glass, wheels, and lamps, face by face, whatever their opacity (so a model with opaque windows keeps them dark). `Alpha=` makes the whole vehicle see-through (near and middle; merged objects are drawn opaque). Both are reapplied only when they change.
 
 **The scene's axes is never changed.** Each new vehicle is drawn in a hidden scratch axes and then moved into the scene. (Drawing straight into the scene would let `fcn_CarMesh3D_plotVehicle` reformat the axes and add lights, because the scene's own objects, from `fcn_CarMesh3D_plotScene`, are hidden handles that `fcn_CarMesh3D_plotVehicle` does not see.) If the scene has no lights, the player adds CarMesh3D's two standard lights.
 
 ### Frame rate
 
-`script_AnimateCar3D_frameRateTest.m` times the player with synthetic traffic on 20 lanes around an ego vehicle. A simple stand-in for the selector gives the nearest vehicles the near tier (up to 10, within 30 m), the next the middle tier (up to 40, within 70 m), and the rest within 100 m the far tier. Each step's time is split into the player's update and MATLAB's drawing (`drawnow`).
+`script_AnimateCar3D_frameRateTest.m` times the player with synthetic traffic on 19 lanes around an ego vehicle (a 200 m window that moves with the ego, so the density stays the same), seen from a camera 38 m behind and 34 m above it, in a 960 x 540 figure. Traffic keeps to the right: lanes to the right of the ego's direction drive "up" the screen (+x), lanes to the left drive down; the ego drives in the first lane to the right, which is otherwise empty. A stand-in for the selector applies its rule (sizes on screen): up to 10 vehicles larger than 105 px are near, up to 40 larger than 37 px middle, and the rest far, each at the level made for its size (far vehicles larger than 37 px, merged only because the middle count is full, at the level made for 37 px). Each step's time is split into the player's update and MATLAB's drawing (`drawnow`). Three kinds of runs:
+
+- **all near:** every vehicle with its full mesh (no tiers);
+- **levels:** tiers and detail levels by size on screen, as above;
+- **boxes far:** the same tiers, but middle vehicles all at the finest level and far vehicles as boxes (as before detail levels), to measure what the merged levels cost.
 
 ![Steps per second vs. number of vehicles](Images/frameRate.png)
 
-| Run | Vehicles | Near / middle / far (mean) | Update [ms] | Draw [ms] | Steps per second |
-|---|---|---|---|---|---|
-| all near | 25 | 26 / 0 / 0 | 9 | 19 | 35 |
-| all near | 50 | 51 / 0 / 0 | 17 | 33 | 20 |
-| all near | 100 | 101 / 0 / 0 | 32 | 61 | 11 |
-| tiered | 100 | 11 / 40 / 49 | 11 | 31 | 23 |
-| tiered | 250 | 11 / 40 / 194 | 8 | 29 | 27 |
-| tiered | 500 | 11 / 40 / 440 | 9 | 34 | 23 |
-| tiered | 1000 | 11 / 40 / 927 | 10 | 40 | 20 |
+| Run | Vehicles | Near / middle / far (mean) | Merged faces | Update [ms] | Draw [ms] | Steps per second |
+|---|---|---|---|---|---|---|
+| all near | 25 | 26 / 0 / 0 | 0 | 10 | 34 | 23 |
+| all near | 50 | 51 / 0 / 0 | 0 | 20 | 38 | 17 |
+| all near | 100 | 101 / 0 / 0 | 0 | 37 | 67 | 10 |
+| levels | 100 | 1 / 40 / 60 | 5900 | 10 | 20 | 34 |
+| levels | 250 | 1 / 40 / 210 | 23100 | 14 | 25 | 26 |
+| levels | 500 | 1 / 40 / 460 | 53000 | 23 | 41 | 16 |
+| levels | 1000 | 1 / 40 / 960 | 110000 | 42 | 71 | 9 |
+| boxes far | 250 | 1 / 40 / 210 | 0 | 12 | 22 | 30 |
+| boxes far | 1000 | 1 / 40 / 960 | 0 | 30 | 23 | 19 |
 
-(MATLAB R2025b, 960 x 540 figure, on the development computer; numbers will differ on other computers. Full results: `Data/frameRate_results.csv`.)
+(MATLAB R2025b, on the development computer, 2026_11_20; numbers will differ on other computers, and vary by a few milliseconds from run to run. Full results: `Data/frameRate_results.csv`. The near count is 1, the ego, because from this camera no traffic vehicle is larger than 105 px.)
 
 What this shows:
-- Without tiers, the time grows with every full mesh: 100 vehicles drop to about 11 steps per second.
-- With tiers, the cost is set by the near and middle limits, not by the number of vehicles: 1000 vehicles still run at 20 steps per second, and the boxes add only a few milliseconds of drawing.
-- Most of the time is MATLAB's drawing, not the player. The tier limits (and the figure size) are the controls for the frame rate.
+- Without tiers, the time grows with every full mesh: 100 vehicles drop to 10 steps per second.
+- Merged levels cost faces, and faces cost drawing time: about 0.5 ms per 1000 merged faces here. Up to about 250 vehicles in this view they run at 26 steps per second or more; at 1000 they are 9, against 19 with boxes.
+- **The cap on vehicles past the middle count.** In this dense test, most far vehicles are large on screen: at 1000 vehicles, about 520 of the 960 are 37 px or larger, merged only because 40 are already drawn as middle. Drawn at the level made for their own size, they held 82% of the merged faces (232000 in all, 5 steps per second). The selector draws them at the level made for `MergeBelowSize` (37 px), which halves the merged faces and nearly doubles the frame rate at 1000 vehicles. Those vehicles have fewer faces than the density standard asks for; raise `MiddleCount` to draw more of them at full density.
+- The controls are `MiddleCount`, `MergeBelowSize`, `MinScreenSize`, `MaxDistance`, and the figure size.
+
+**New graphics, and level switches.** The player makes a vehicle's graphics the first time it needs a mesh at a tier and level with no free graphics to reuse: most often when a middle vehicle moves to another detail level. Over each run's 40 timed steps (2 s of traffic):
+
+| Run | Vehicles | Steps that made new graphics | Graphics made | Player's time on those steps [ms] | On the other steps [ms] |
+|---|---|---|---|---|---|
+| levels | 100 | 7 of 40 | 8 | 18 | 8 |
+| levels | 250 | 4 of 40 | 4 | 22 | 13 |
+| levels | 500 | 4 of 40 | 4 | 32 | 22 |
+| levels | 1000 | 3 of 40 | 3 | 48 | 41 |
+| boxes far | 250 | 2 of 40 | 2 | 22 | 11 |
+| boxes far | 1000 | 2 of 40 | 2 | 38 | 29 |
+
+Making one vehicle's graphics costs about 6 to 11 ms, on a few steps a second; averaged over all steps, about 1 to 2 ms per step (6% at most). Even with one level for every middle vehicle (the "boxes far" runs), graphics are made on 2 steps of 40, because middle vehicles also come and go; so limiting the levels used would remove at most about half of these spikes. Not worth a setting for now (see [TO-DO](#to-do)).
+
+**The demonstration** (`Images/denseTraffic_1000vehicles.gif`, made by the same script, `flag_saveGif`): 1000 vehicles with detail levels for 5 s, with the tiers, merged faces, and time per step in the caption.
+
+![1000 vehicles, with detail levels](Images/denseTraffic_1000vehicles.gif)
 
 ## Scenes: catalog and selector (step 2)
 
@@ -189,23 +216,25 @@ The selector runs once per step. Its steps are listed under [Step 2 summary](#st
 
 **Region** (`Region=`): which objects are candidates.
 
-| Region | Candidates | Tier distances measured from |
+| Region | Candidates | Sizes on screen measured from |
 |---|---|---|
-| `'cameraView'` (**default**) | objects inside the camera's field of view (plus `ViewMargin`, and the object's own size), up to `FarDistance` | the camera: closeness to the camera is what makes an object look big |
-| `'circle'` | objects within `Radius` of `Center` | `Center` |
-| `'box'` | objects inside a `BoxSize` rectangle around `Center`, aligned with the global axes or with the center's heading (`BoxAlign`) | `Center` |
+| `'cameraView'` (**default**) | objects inside the camera's field of view (plus `ViewMargin`, and the object's own size), up to `MaxDistance` (500 m) | the camera |
+| `'circle'` | objects within `Radius` of `Center` | the camera if given; else `Center` |
+| `'box'` | objects inside a `BoxSize` rectangle around `Center`, aligned with the global axes or with the center's heading (`BoxAlign`) | the camera if given; else `Center` |
 
-For `'cameraView'`, set the camera for the step first, then pass `Camera=gca` (or a structure with `Position`, `Target`, `ViewAngle`). Without a camera, `'cameraView'` falls back to a circle of radius `FarDistance` around `Center`. **`Center`** can be `'ego'` (default), any instance name, `'camera'` (the camera's target, so a camera can pan a scene), a fixed `[x y]`, or a function of time `@(t) [x y]` (or `[x y yaw]`).
+For `'cameraView'`, set the camera for the step first, then pass `Camera=gca` (or a structure with `Position`, `Target`, `ViewAngle`, and optionally `Pixels`, the axes' smaller side, default 450). Without a camera, `'cameraView'` falls back to a circle of radius `MaxDistance` around `Center`. **`Center`** can be `'ego'` (default), any instance name, `'camera'` (the camera's target, so a camera can pan a scene), a fixed `[x y]`, or a function of time `@(t) [x y]` (or `[x y yaw]`).
 
-**Tiers:** near (`NearCount`, default 10, within `NearDistance`, 30 m), middle (`MiddleCount` 40 within `MiddleDistance` 70 m), far boxes (`FarCount` unlimited, within `FarDistance` 100 m). Ties go to the nearest object, whatever its role. With a camera high above the scene, raise the distances: the demos use 90 / 150 / 250 m and 55 / 95 / 170 m.
+**Tiers, by size on screen** (pixels; see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5)): near above `TopScreenSize` (105 px; up to `NearCount`, 10), middle above `MergeBelowSize` (37 px; up to `MiddleCount`, 40), far down to `MinScreenSize` (1 px; up to `FarCount`, unlimited), and nothing smaller. Objects are placed largest first, whatever their role; one over a count goes to the next tier down. Without a camera, sizes use `NominalScale` (618: an axes 450 px on its smaller side, 40 degrees). Because the tiers are in pixels, the same criteria suit a camera close by or high above the scene, a small figure or a large one, a car or a bus.
 
-**Hysteresis** (default 10%): an object at a tier keeps it until it is beyond the tier's distance times 1.1; the region grows by the same margin for objects already shown. This stops objects at a boundary from flickering between tiers.
+**Detail levels:** pass the mesh set (`MeshSet=meshSet`) and each middle and far vehicle gets the coarsest level made for at least its size on screen.
+
+**Hysteresis** (default 10%): an object at a tier keeps it until its size passes the tier's boundary by 10%; a vehicle moves to a finer level as soon as it grows past its level's size, and to a coarser one only once it has shrunk 10% past the boundary. The region grows by the same margin for objects already shown. This stops objects at a boundary from flickering.
 
 **Roles:** `RolesShown` (all), `AlwaysShown` (`ego`, `confederate`: drawn wherever they are), `AlwaysShowBranches` (true), `FixedTiers` (`{'ego','near'}`), `HideParentAtSplit` (true: a parent stops being drawn when its first branch splits off).
 
 **Styles:** an object's own `color` and `alpha` from the scene list, or its role's default: confederates are tinted `ConfederateColor`; branches take their parent's color and `BranchAlpha` (0.35).
 
-The selector returns its state for the next step: each drawn object's tier (for hysteresis), the motion files already read, the static lookup, which objects **entered** and **left** this step, and timing (`Stats`). For 200 cars it takes about 2 ms per step.
+The selector returns its state for the next step: each drawn object's tier and level (for hysteresis), the motion files already read, the static lookup, each mesh's size, which objects **entered** and **left** this step, and counts and timing (`Stats`, including `NumTooSmall`). For 200 cars it takes about 2 ms per step.
 
 ### The demos
 
@@ -251,7 +280,7 @@ end
 | `<instance>.csv` | one object's motion in the CarMesh3D motion format (`time`, `X`, `Y`, `yaw`, and any other motion columns); the file name is the instance. It may grow as rows are added; it is read once it has 2 rows |
 | `<name>.csv` with an `id` column | many objects in the long traffic format; instances are `<name>_<id>` |
 | `sceneList.csv` (optional) | the scene list: roles, meshes, colors, branches, time offsets. It may list objects whose files do not exist yet; a changed scene list restyles the objects already shown without rereading their motions. Objects not in it get `DefaultRole` (`traffic`) and `DefaultMeshID` (`sample`) |
-| `displayCriteria.txt` (optional) | changes to the display criteria, one per line, e.g. `FarDistance = 150`, `RolesShown = ego, confederate`, `FixedTiers = ego near; confederate middle` |
+| `displayCriteria.txt` (optional) | changes to the display criteria, one per line, e.g. `MaxDistance = 150`, `RolesShown = ego, confederate`, `FixedTiers = ego near; confederate middle` |
 
 **Partly written files.** A file whose last character is not a line end is still being written: it is left until a later check. A file that cannot be read yet (for example, with only one row) is reported in `update.Skipped` and tried again on the next check. Files deleted from the folder remove their objects from the catalog.
 
@@ -259,7 +288,7 @@ end
 
 **Speed.** Growing 200 cars by 1 s each updates the catalog in about 0.12 s. In the live demo (23 vehicles, checked every 0.5 s), each check and catalog update took about 0.12 s on average.
 
-**The live demo** (`script_demo_AnimateCar3D.m`, step 7): the test helper writes an ego vehicle and 22 traffic vehicles into a temporary folder, one file per vehicle; each file appears when its vehicle starts and is deleted 1 s after it ends. Oncoming cars come from 110 m ahead and pass behind the camera. Overtaking cars start 35 m behind the ego (behind the camera), pass it, and pull ahead: each is drawn near, then with the low-detail mesh, then as a box, and is no longer drawn once it is beyond `FarDistance` from the camera (for example, `car02`: near as it passes, middle from 6 s, a box from 10 s, gone at 16 s). The loop checks the folder every 0.5 s and draws 1 s behind the newest data, with the camera following the ego (tier distances 30 / 55 / 95 m, measured from the camera, 22 m behind the ego). At 4 s, `displayCriteria.txt` is "edited" so that all traffic is drawn as boxes, and at 7 s back to detail. The caption shows the time drawn, the newest data, the files in the folder, and the tiers.
+**The live demo** (`script_demo_AnimateCar3D.m`, step 7): the test helper writes an ego vehicle and 22 traffic vehicles into a temporary folder, one file per vehicle; each file appears when its vehicle starts and is deleted 1 s after it ends. Oncoming cars come from 110 m ahead and pass behind the camera. Overtaking cars start 35 m behind the ego (behind the camera), pass it, and pull ahead: each is drawn near, then with ever coarser reduced meshes as it shrinks on screen (separately, then merged), and is no longer drawn once it is beyond `MaxDistance` (150 m) from the camera. The loop checks the folder every 0.5 s and draws 1 s behind the newest data, with the camera following the ego. At 4 s, `displayCriteria.txt` is "edited" so that all traffic is merged (`TopScreenSize = 10000`, `MergeBelowSize = 10000`: each vehicle at its detail level, in one patch), and at 7 s back to the defaults. The caption shows the time drawn, the newest data, the files in the folder, and the tiers.
 
 (In the first version of this demo, the overtaking cars' motions lasted only 8 s and ended just before they reached the ego, so they vanished beside it: an object no longer exists after its last time. That was the demo's traffic, not the selector.)
 
@@ -308,12 +337,12 @@ Every object in a scene (the ego vehicle, traffic, pedestrians, gates, buildings
 
 **Each time step**
 
-3. **Display criteria.** A region (a radius around an object, a box, or the camera's view), enter and exit distances, roles to show and to always show, and distance and count limits for each detail tier. They can be changed while the animation runs.
-4. **Selector.** Picks the objects to show at this time, gives each a detail tier, and builds the **display list**: the only input of the scene player.
+3. **Display criteria.** A region (a radius around an object, a box, or the camera's view), roles to show and to always show, and size-on-screen and count limits for each detail tier. They can be changed while the animation runs.
+4. **Selector.** Picks the objects to show at this time, gives each a detail tier and level from its size on screen, and builds the **display list**: the only input of the scene player.
 5. **Scene player.** Draws, moves, and hides objects. It never decides what to show, and it treats static and moving objects alike.
    - Near tier: full CarMesh3D meshes, with wheels and lights.
-   - Middle tier: low-face meshes.
-   - Far tier: boxes, all drawn as one patch.
+   - Middle tier: reduced meshes (detail levels), each its own object.
+   - Far tier: reduced meshes down to boxes, all merged into one patch.
 
    Leaving objects are hidden and reused rather than deleted.
 6. **Frame out.** To the screen, a GIF, or a video.
@@ -326,11 +355,11 @@ Every object in a scene (the ego vehicle, traffic, pedestrians, gates, buildings
 ## Development plan
 
 0. **Repository setup** (done): template leftovers removed; one copy of CarMesh3D on the path; `fcn_AnimateCar3D_checkCarMesh3D`, which checks every CarMesh3D function, option, mesh field, motion column, and folder rule that AnimateCar3D relies on.
-1. **Display list and scene player** (done), fed from memory: reuse of hidden graphics and the three detail tiers. Demo: ten ego branches splitting partway. Frame-rate test from 100 up to 1000 vehicles (20 steps per second at 1000; see [Frame rate](#frame-rate)).
+1. **Display list and scene player** (done), fed from memory: reuse of hidden graphics and the three detail tiers. Demo: ten ego branches splitting partway. Frame-rate test from 100 up to 1000 vehicles (20 steps per second at 1000 with far boxes, at the time; see [Frame rate](#frame-rate) for the current numbers).
 2. **Scene list, object catalog, selector, and static scene** (done). Demos: a confederate with branches and the ego's responses; dense traffic from one file, with a panning camera (see [Scenes: catalog and selector](#scenes-catalog-and-selector-step-2)).
 3. **Live use** (done): display criteria changed while running (from a script, or a file in the watched folder); the watched-folder source; a test helper that adds and removes files in a watched folder (see [Live use](#live-use-step-3)).
 4. **Pedestrians and moving items** (done), as simple shapes first (see [Pedestrians and moving items](#pedestrians-and-moving-items-step-4)).
-5. **Detail levels set by size on screen** (designed; next): any number of levels, chosen by each object's size in pixels, from a ladder of reduced meshes made by CarMesh3D (see [Design: detail levels set by size on screen](#design-detail-levels-set-by-size-on-screen-planned)).
+5. **Detail levels set by size on screen** (done): any number of levels, chosen by each object's size in pixels, from a ladder of reduced meshes made by CarMesh3D (see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5)).
 
 Later: a 2D (top-down) mode using the same detail levels.
 
@@ -388,7 +417,7 @@ Later: a 2D (top-down) mode using the same detail levels.
 - **The cache missed color changes.** The first version of the cache compared only some scene list fields, so after colors were added to the traffic, the demo reloaded the old, colorless catalog. The cache now compares every scene list field, and the test checks a color change.
 - **Motions with different fields cannot be joined** into one MATLAB structure array (the ego's motion had wheels and lights; the traffic file's only poses). The demo gives the traffic motions the same, empty, fields; the README's [Input files](#input-files) notes it.
 
-**The design, as built:**
+**The design, as built:** (Tiers by distance, below, were replaced on 2026_11_20 by sizes on screen in pixels: see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5) and [The selector and the display criteria](#the-selector-and-the-display-criteria).)
 
 The selector decides, at each time step, which objects are drawn and at what tier; nothing else does. It runs once per step, between the object catalog and the scene player.
 
@@ -467,19 +496,21 @@ The region shape is a circle (radius) or a box (length and width, aligned with t
 - **The player's first call took over the current figure.** Making its hidden scratch figure made that the current figure, so a `title`, `campos`, or caption right after the first step went to the hidden figure. The player now hands the current figure back to the scene.
 - **The demos' titles never showed** with the camera placed by hand (the title fell outside the figure). The demo animations now use a caption at the top of the figure instead; all five demo GIFs were made again, so the step 5 and 6 GIFs now show their captions, and the step 6 buildings and trucks are lit correctly.
 
-## Design: detail levels set by size on screen (planned)
+## Detail levels set by size on screen (step 5)
 
-> **Status:** designed and tested on the 2013 Prius only (2026_11_19); not yet in the code. The tiers in the code today are the three of [The scene player](#the-scene-player-step-1), set by distance in meters. **The reduced meshes will be made by CarMesh3D** (see its README, "Detail levels for animation"): the size-on-screen standard, the density rule, the ladder of levels, the closed-hull method, and the window-color study are described there. This section covers AnimateCar3D's side: choosing a level for each object every frame, and drawing it.
+> **Status:** built (2026_11_20), with CarMesh3D release `CarMesh3D_2026_11_20`. **The reduced meshes are made by CarMesh3D** (see its README, "Detail levels for animation"): the size-on-screen standard, the density rule, the ladder of levels, the closed-hull method, and the window-color study are described there. This section covers AnimateCar3D's side: choosing a level for each object every frame, and drawing it.
+
+![Each vehicle as drawn, at its real size on screen, with its tier and level](Images/detailLevels_inScene.png)
 
 ### Why change
 
-Today a vehicle's detail is set by its distance from the camera: near within 30 m, middle within 70 m, a 5-face box within 100 m, nothing beyond. Three problems showed up:
+Until step 5, a vehicle's detail was set by its distance from the camera: near within 30 m, middle within 70 m, a 5-face box within 100 m, nothing beyond. Three problems showed up:
 
 1. **The low-detail meshes had defects, and the box does not look like a vehicle.** The middle mesh came from `fcn_CarMesh3D_simplifyMesh`, which opens gaps between a downloaded body's separate panels when it reduces them (around the Prius's rear wheel, for example).
 2. **Three tiers are not enough for long views.** On a highway one can see 200 m and more, where a vehicle is still several pixels long.
 3. **Meters are the wrong unit.** How much detail can be seen depends on how big an object is *on screen*: that changes with the window size and view angle (in a 1920 x 1080 window everything is 2.4 times bigger than in 800 x 450) and with the object's own size (a 12 m bus at 80 m looks as big as a 4.5 m car at 30 m). A threshold in meters suits one vehicle in one window.
 
-![The current tiers: full mesh, low-detail mesh with gaps, and a box](Images/vehicleTiers.png)
+![The old tiers: full mesh, low-detail mesh with gaps, and a box](Images/vehicleTiers.png)
 
 ### Who does what
 
@@ -496,57 +527,74 @@ Because every level says which size on screen it was made for, AnimateCar3D does
 
 - **D:** the diagonal of the object's bounding box in its own frame (from its min to its max x, y, z), from the levels file (for simple shapes, from their size).
 - **Distance:** from the camera to the center of that box (turned and moved by the object's pose).
-- **Size on screen**, pixels: `size = D x (axes height in pixels) / (2 x distance x tan(CameraViewAngle / 2))`. For the 800 x 450 demo view with a 40 degree view angle, `size = D x 618 / distance`; a Prius (D = 5.14 m) is 105 px at 30 m and 21 px at 150 m.
+- **Size on screen**, pixels: `size = D x (the axes' smaller side, pixels) / (2 x distance x tan(CameraViewAngle / 2))`. MATLAB's `CameraViewAngle` spans the smaller side of the axes (its `Position` in pixels, not the figure; measured with axes of four shapes, see CarMesh3D's README). For an axes 450 px on its smaller side with a 40 degree view angle, `size = D x 618 / distance`: a Prius (D = 5.14 m) is 105 px at 30 m and 21 px at 150 m. The demos' 800 x 450 figures have MATLAB's default axes, only 620 x 367 inside them, so there `size = D x 504 / distance`.
 
-The selector works this out for every candidate, every step, from the camera it already gets (`Camera=`). Without a camera (circle or box regions), it uses a nominal 800 x 450, 40 degree view.
+The selector works this out for every candidate, every step, from the camera it already gets (`Camera=`; for a camera structure, `Pixels` is the axes' smaller side, default 450). Without a camera (circle or box regions), it uses `NominalScale` (618: an axes 450 px on its smaller side, 40 degrees), from `Center`. D and the box come from the mesh set (`MeshSet=`); without one, from the object's `Size`, or a typical car's (4.5 x 1.8 x 1.5 m, its box center 0.3 of its length ahead of the origin).
 
 ### Choosing a level
 
-- **The full mesh while the object is larger than the ladder's top** (105 px by default): the only level with spinning and steering wheels, body motion, and switching lights.
-- **Otherwise, the coarsest level made for at least the object's current size** (the levels' `MaxScreenSize`). An object is never drawn with less than the standard density; the ladder's steps (each level about half the faces of the one above) only decide how many extra faces it may carry, at most about twice.
-- **A box** below the ladder's last mesh; **not drawn** under `MinScreenSize` (default 1 px).
-- **Hysteresis** in pixels: an object keeps its level until its size passes the boundary by 10%.
-- **Caps:** at most `NearCount` objects drawn with the full mesh (default 10) and `IndividualCount` drawn as separate reduced meshes (default 40); one over a cap is drawn at the next level down.
-- **Which levels:** settings may limit the levels used (for example, only every other level for objects drawn separately, where a switch costs new graphics; every level for merged objects, where a switch costs nothing).
-- **A maximum distance** stays, only to bound the selector's search of the catalog's grid (default perhaps 500 m), since a bus is still a pixel at 7 km.
-- **Simple shapes** (pedestrians, posts, gate arms) have only a few faces: drawn as they are at every size, and not drawn under `MinScreenSize`.
+- **The full mesh while the object is larger than `TopScreenSize`** (105 px, the ladder's top): the only level with spinning and steering wheels, body motion, and switching lights.
+- **Otherwise, the coarsest level made for at least the object's current size** (the levels' `MaxScreenSize`). An object is never drawn with less than the standard density; the ladder's steps (each level about half the faces of the one above) only decide how many extra faces it may carry, at most about twice. (A small mesh's ladder can start below 105 px: CarMesh3D skips a level that would need as many faces as the full mesh. The sample car, 636 faces, starts at 74 px; above that, as a middle object, it is drawn with its full mesh, which is then the cheaper choice.)
+- **A box** below the ladder's last mesh (about 9 px for the Prius); **not drawn** under `MinScreenSize` (default 1 px).
+- **Hysteresis** in pixels (10%): a tier is kept until the size passes its boundary by 10%. A vehicle moves to a **finer** level as soon as it grows past its level's `MaxScreenSize` (never too few faces), and to a **coarser** one only once it has shrunk 10% past the boundary.
+- **Caps:** at most `NearCount` objects drawn with the full mesh (default 10) and `MiddleCount` drawn as separate reduced meshes (default 40), largest on screen first; one over a cap is drawn in the next tier down. A vehicle merged only because the middle count is full (larger than `MergeBelowSize`) gets the level made for `MergeBelowSize`, not for its own size: this bounds the merged patch to about 130 faces per vehicle, at the cost of less than the standard density for those vehicles.
+- **A maximum distance**, `MaxDistance` (500 m), only bounds the selector's search of the catalog's grid, since a bus is still a pixel at 7 km.
+- **Simple shapes** (pedestrians, posts, gate arms) have only a few faces: drawn as they are at every size (always merged), and not drawn under `MinScreenSize`.
+- Not built: limiting the levels used (for example, only every other level for objects drawn separately, where a switch costs new graphics). See [TO-DO](#to-do).
 
 ### Drawing the levels
 
 | Drawn as | When (defaults) | How |
 |---|---|---|
-| Full mesh | over 105 px | as the near tier now: `fcn_CarMesh3D_plotVehicle`, with wheels, body, and lights |
-| Separate reduced meshes | 37 to 105 px (`MergeBelowSize = 37`) | as the middle tier now: one transform per object, set directly; graphics reused when objects leave |
-| Merged | under 37 px | all such objects in ONE patch (each in its own level's mesh, as simple shapes are now), vertices updated each step |
+| Full mesh (`near`) | over 105 px | `fcn_CarMesh3D_plotVehicle`, with wheels, body, and lights |
+| Separate reduced meshes (`middle`) | 37 to 105 px (`MergeBelowSize = 37`) | each level's mesh drawn once with `fcn_CarMesh3D_plotVehicle`, then one transform per object, set directly; graphics reused by the next object with the same mesh and level |
+| Merged (`far`) | under 37 px | all such vehicles in ONE patch, each in its own level's mesh (corners reversed for MATLAB's lighting, prepared once per mesh and level), vertices updated each step; boxes and simple shapes in a second patch, with edges |
 
-Merging is what keeps thousands of far objects cheap, but merged faces add up: 1000 objects at 120 faces each (120000 faces in one patch) take about 2 ms to update and 66 ms to draw, against 12 ms for 1000 boxes. The caps and `MergeBelowSize` are the controls.
+Merging is what keeps thousands of far objects cheap, but merged faces add up (about 0.5 ms of drawing per 1000 faces in the frame-rate test; see [Frame rate](#frame-rate)). The caps and `MergeBelowSize` are the controls.
 
-The four levels tested, each at its starting distance in the 800 x 450 view (the Prius; face counts from the first test, before the ladder was settled):
+The four levels first tested, each at its starting distance in the 800 x 450 view (the Prius; face counts from the first test, before the ladder was settled):
 
 ![The four levels at their starting distances, in one view](Images/detailLevels_fourTiers.png)
 
 ### Tint by part
 
-The player's `Color=` tints every fully opaque face on the vehicle's body (all but lamps), which leaves windows alone only because the meshes' glass so far is see-through (alpha 0.6). An opaque window (for example in a downloaded model with opaque glass) is tinted like paint. The player should instead tint by part: every part except glass, wheels, and lamps (the body and trim, as it does now). This was found while testing window decals for the reduced levels (tried and not used; see CarMesh3D's README).
+Until step 5, the player's `Color=` tinted every fully opaque face on the vehicle's body (all but lamps), which left windows alone only because the meshes' glass so far was see-through (alpha 0.6). An opaque window (for example in a downloaded model with opaque glass) was tinted like paint. The player now tints by part: every part except glass, wheels, and lamps. `fcn_CarMesh3D_plotVehicle` puts the body, trim, and any opaque glass in one patch, so each patch's faces are matched to the mesh's faces (by their centers, which stay in the vehicle's own frame) when its graphics are made, and only the body and trim faces are tinted. Merged vehicles are tinted the same way, from each level's `FacePartIndex`. This was found while testing window decals for the reduced levels (tried and not used; see CarMesh3D's README).
 
-![Why the player should tint by part: with opaque windows, the current tint turns them red; tinting by part does not](Images/tintByPart.png)
+![Why the player tints by part: with opaque windows, the old tint turned them red; tinting by part does not](Images/tintByPart.png)
 
-### Steps to build it
+### Step 5 summary: detail levels (done 2026_11_20)
 
-In CarMesh3D (its TO-DO): `fcn_CarMesh3D_makeDetailLevels`, `fcn_CarMesh3D_loadDetailLevels`, the levels file, levels for the Prius and the Transit Connect, a release. First, check how MATLAB's `CameraViewAngle` maps to pixels with axes of different shapes.
+**In CarMesh3D** (release `CarMesh3D_2026_11_20`): `fcn_CarMesh3D_makeDetailLevels`, `fcn_CarMesh3D_loadDetailLevels`, the levels file `vehicleLevels_<ID>.mat` (Prius: 1026, 512, 256, 128, 64, 32, and 16 faces, then a box; Transit Connect: 1144 down to 18, then a box), and the `CameraViewAngle` check (it spans the axes' smaller side).
 
-In AnimateCar3D, with that release:
+**In AnimateCar3D:**
+- `fcn_AnimateCar3D_checkCarMesh3D`: a seventh category, `detailLevels` (the two new functions, the levels' fields and format version, their order, each level's mesh fields), and the levels file in the vehicle folder rules: 54 checks.
+- `fcn_AnimateCar3D_loadMeshes`: each vehicle's full mesh and ladder (`Levels`), with `SizeDiagonal`, `BoxCenter`, and `TopScreenSize`; D and the box for simple shapes. The `LowFaces` option and the `Low` mesh are gone (CarMesh3D's levels replace `fcn_CarMesh3D_simplifyMesh` here).
+- `fcn_AnimateCar3D_fillDisplayCriteria`: `TopScreenSize`, `MergeBelowSize`, `MinScreenSize`, `NominalScale`, and `MaxDistance`, in place of `NearDistance`, `MiddleDistance`, and `FarDistance`; its figure plots the tiers as sizes against distance.
+- `fcn_AnimateCar3D_selectObjects`: each candidate's size on screen, tiers by size (largest first, with counts), levels with hysteresis, the `MeshSet=` option, `Pixels` in a camera structure, and `NumTooSmall` in its stats.
+- `fcn_AnimateCar3D_fillDisplayList`: `Level` and `ScreenSize` for each object.
+- `fcn_AnimateCar3D_playScene`: middle objects at any level (reused by mesh, tier, and level), far vehicles merged at their levels (`MergedPatch`), tint by part, and `NumMergedFaces` in its stats.
+- `fcn_AnimateCar3D_changeDisplayCriteria`, the demo, and the frame-rate test use the new criteria; the demo passes the mesh set to the selector.
+- Afterwards (2026_11_20): far vehicles past the middle count capped at the level made for `MergeBelowSize`; the sample car's mesh and levels cached (`SampleCacheFile`; 3.3 s to make, 0.01 s from the cache); right-hand traffic in the frame-rate test and the selector's test; the timing of new graphics; and the 1000-vehicle demonstration GIF.
 
-1. `fcn_AnimateCar3D_checkCarMesh3D`: the new functions and the levels file's fields in the contract.
-2. `fcn_AnimateCar3D_loadMeshes`: every level of each vehicle (from `fcn_CarMesh3D_loadDetailLevels`), and D for simple shapes.
-3. `fcn_AnimateCar3D_fillDisplayCriteria`: `TopScreenSize`, `MergeBelowSize`, `MinScreenSize`, the caps, the levels to use, hysteresis in pixels, and the maximum distance (replacing the near, middle, and far distances).
-4. `fcn_AnimateCar3D_selectObjects`: each candidate's size on screen; its level by the rule above.
-5. `fcn_AnimateCar3D_playScene`: any number of levels; separate and merged drawing; tint by part.
-6. Test on the Prius and the Transit Connect, then the demos, and time the frame rate again.
+**How it was checked:**
+- All 17 AnimateCar3D test scripts pass; the contract check passes 54 of 54 against `CarMesh3D_2026_11_20`. New and changed tests:
+  - loadMeshes: the Prius's and the Transit's ladders and D, the sample car's shorter ladder, and the boxes of simple shapes;
+  - selectObjects: tiers ordered by size and within their sizes; a car pulling away stays near until its size is 10% under 105 px (and exactly at 105 px without hysteresis); sizes from a camera match the formula, and double with twice the pixels; each level is the coarsest made for its size; a car pulling away 120 m is never drawn coarser than its size needs, and hysteresis keeps a finer level at least once;
+  - playScene: a middle car switching levels creates, hides, and reuses graphics; `ScreenSize` alone picks the level; far cars at three levels are merged into one patch with the right face count (a box goes with the boxes); a tinted merged car keeps its glass colors; merged faces face outward; with opaque glass, glass faces in the tinted patch keep their colors;
+  - checkCarMesh3D: a newer levels format, and a missing level field, are caught.
+- The demo was run step by step, and its GIFs inspected (the panning traffic, the live folder during the "all merged" edit, and the confederate scene); the picture above was checked against a marker placed in the scene (the projection agrees within a pixel).
+- The frame rate was timed again (see [Frame rate](#frame-rate)).
+
+**Problems found, and how they were handled:**
+- **A small mesh's ladder starts below 105 px** (the sample car's starts at 74 px). The contract check first required the first level to be made for exactly 105 px; it now requires at most 105 px, and a middle object larger than its ladder's top is drawn with its full mesh.
+- **Merged faces in dense scenes.** With 1000 vehicles close to the camera, most merged faces came from vehicles over 37 px merged only because the middle count was full. Such vehicles are now drawn at the level made for `MergeBelowSize`, which halved the merged faces (see [Frame rate](#frame-rate)); the selector's test checks it.
 
 ## TO-DO
 
-**Next:** detail levels set by size on screen (see [Design: detail levels set by size on screen](#design-detail-levels-set-by-size-on-screen-planned)): first the levels in CarMesh3D (its TO-DO), then the selector and player here. After that, the 2D (top-down) mode, using the same detail levels.
+**Next:** the 2D (top-down) mode, using the same detail levels.
+
+**Detail levels** (from step 5)
+- Limiting the levels used by separate objects (every other level, say) was considered: a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Not done; reconsider if separate vehicles switch levels often in a scene (many vehicles crossing 37 to 105 px at once, for example a camera moving fast).
 
 **Smaller items**
 - A loop function (`fcn_AnimateCar3D_playLive`, say) for the live loop in [Live use](#live-use-step-3): watch, update, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
@@ -559,10 +607,10 @@ In AnimateCar3D, with that release:
 **Open questions**
 - Path lines for branches: drawn by the player, or listed as objects in the display list? (The demo draws them itself for now.)
 
-**Changes wanted in CarMesh3D** (for a later CarMesh3D release; AnimateCar3D works around each one for now)
+**Changes wanted in CarMesh3D** (for a later CarMesh3D release; AnimateCar3D works around each one for now; the same list is in CarMesh3D's README, under "Changes wanted by AnimateCar3D")
 - `fcn_CarMesh3D_plotVehicle` decides whether an axes is "new" from its visible children only, so it reformats an axes holding only `fcn_CarMesh3D_plotScene`'s hidden-handle objects, and adds lights when the scene's lights are hidden handles. (Work-around: the player draws in a scratch axes.)
 - `fcn_CarMesh3D_saveGifFrame` picks a new 256-color map for each frame, so small colored details (thin lines, tinted vehicles) can turn gray. An option for a fixed color map would help. (Work-around: the main demo writes its GIF with a fixed color map.)
-- Save the low-detail mesh with each vehicle, so `fcn_AnimateCar3D_loadMeshes` does not remake it every run.
+- The sample car as a vehicle folder in CarMesh3D's `Data`, with its finished mesh and levels file, so that `'sample'` loads like any other vehicle. (Work-around: `fcn_AnimateCar3D_loadMeshes` makes the sample car and its levels once, about 3 s, and keeps them in a cache file in MATLAB's temporary folder, `SampleCacheFile`, remade when the CarMesh3D copy changes.)
 - A version function, so AnimateCar3D can check that the CarMesh3D release is new enough.
 
 ## License

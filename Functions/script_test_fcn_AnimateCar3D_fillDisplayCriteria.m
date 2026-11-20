@@ -52,8 +52,10 @@ assert(isstruct(criteria));
 
 % Check variable values
 assert(strcmp(criteria.Region,'cameraView') && strcmp(criteria.Center,'ego'));
-assert(criteria.NearDistance==30 && criteria.NearCount==10 && criteria.MiddleDistance==70 && criteria.MiddleCount==40);
-assert(criteria.FarDistance==100 && isinf(criteria.FarCount) && abs(criteria.Hysteresis-0.1)<1e-12);
+assert(criteria.TopScreenSize==105 && criteria.MergeBelowSize==37 && criteria.MinScreenSize==1);
+assert(criteria.NearCount==10 && criteria.MiddleCount==40 && isinf(criteria.FarCount));
+assert(criteria.MaxDistance==500 && criteria.NominalScale==618 && abs(criteria.Hysteresis-0.1)<1e-12);
+assert(~any(isfield(criteria, {'NearDistance','MiddleDistance','FarDistance'})));
 assert(isequal(criteria.FixedTiers, {'ego','near'}));
 assert(~isfield(criteria,'FigNum'));
 
@@ -123,9 +125,9 @@ assert(isstruct(criteria));
 %% Fail conditions
 % Each block below should throw an error. Change 1==0 to 1==1 to run them.
 
-%% FAIL case: Tier distances that do not increase
+%% FAIL case: Tier sizes out of order
 if 1==0
-    fcn_AnimateCar3D_fillDisplayCriteria(NearDistance=80, MiddleDistance=70);
+    fcn_AnimateCar3D_fillDisplayCriteria(TopScreenSize=30, MergeBelowSize=37);
 end
 
 %% FAIL case: An unknown region

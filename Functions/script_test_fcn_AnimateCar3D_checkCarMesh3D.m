@@ -59,12 +59,13 @@ assert(isstruct(checkReport.Contract));
 assert(checkReport.NumChecks == height(checkReport.Results));
 assert(checkReport.NumChecks > 20);
 
-% Check variable values: everything passes, all six categories ran, and
+% Check variable values: everything passes, all seven categories ran, and
 % the copy checked is the one MATLAB uses
 assert(checkReport.Passed);
 assert(checkReport.NumFailed == 0);
 assert(isempty(setxor(unique(cellstr(checkReport.Results.Category)), ...
-    {'functions','inputs','motionColumns','meshFields','plotting','vehicleFolders'})));
+    {'functions','inputs','motionColumns','meshFields','plotting','vehicleFolders','detailLevels'})));
+assert(sum(strcmp(cellstr(checkReport.Results.Category),'detailLevels')) == 6);   % 3 for made levels, 3 for a levels file
 assert(startsWith(which('fcn_CarMesh3D_plotVehicle'), checkReport.CarMesh3DRoot));
 
 % Make sure plot opened up
@@ -156,6 +157,25 @@ checkReport = fcn_AnimateCar3D_checkCarMesh3D(Checks={'motionColumns','meshField
 failedMessages = strjoin(cellstr(checkReport.Results.Message(~checkReport.Results.Passed)), ' ');
 assert(contains(failedMessages, 'column 11 is "roll_rate"; expected "rollRate"'));
 assert(contains(failedMessages, 'FaceTextureCoordinates'));
+
+%% TEST case: A newer levels format, and a missing level field, are caught
+figNum = 20004;
+titleString = sprintf('TEST case: A newer levels format, and a missing level field, are caught');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+badContract = goodReport.Contract;
+badContract.DetailLevelsFormatVersion = 2;
+badContract.DetailLevelFields{end+1} = 'Seams';
+checkReport = fcn_AnimateCar3D_checkCarMesh3D(Checks={'detailLevels'}, Contract=badContract, ThrowError=false);
+failedMessages = strjoin(cellstr(checkReport.Results.Message(~checkReport.Results.Passed)), ' ');
+assert(contains(failedMessages, 'AnimateCar3D knows version 2'));
+assert(contains(failedMessages, 'Seams'));
+assert(checkReport.NumFailed == 4);      % both checks of each of the two sets of levels
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
 
 %% Fast Mode Tests
 

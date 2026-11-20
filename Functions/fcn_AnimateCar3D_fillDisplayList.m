@@ -10,13 +10,20 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %
 %   'near'    full mesh: wheels spin and steer, the body rolls, pitches,
 %             and heaves, lights switch
-%   'middle'  low-detail mesh, moved by its pose only
-%   'far'     a box of the vehicle's size; all far boxes are drawn as one
-%             object, so thousands cost little
+%   'middle'  a reduced mesh (one of the vehicle's detail levels), drawn
+%             as its own object, moved by its pose only
+%   'far'     a reduced mesh, down to a box; all far objects are merged
+%             into one patch, so thousands cost little
+%
+% Which detail level a middle or far object uses is its Level (an index
+% into its mesh's Levels, from fcn_AnimateCar3D_loadMeshes), or, if Level
+% is NaN, the level made for its ScreenSize (the coarsest whose
+% MaxScreenSize is at least ScreenSize). With neither, a middle object
+% uses the finest level and a far object a box.
 %
 % Simple shapes ('box', 'bar', 'cylinder', 'pedestrian'; see
 % fcn_AnimateCar3D_fillSimpleShape) have no mesh, so they are always
-% 'far': they are drawn with the far boxes, each in its own shape.
+% 'far': they are merged with the far objects, each in its own shape.
 %
 % FORMAT:
 %
@@ -26,7 +33,8 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %           (WheelSpin=spin), (SteerAngle=steer), (WheelLift=lift),...
 %           (BodyRoll=roll), (BodyPitch=pitch), (BodyHeave=heave),...
 %           (LightStates=states), (Color=colors), (Alpha=alphas),...
-%           (Size=sizes), (AppendTo=displayList), (FigNum=figNum))
+%           (Size=sizes), (Level=levels), (ScreenSize=pixels),...
+%           (AppendTo=displayList), (FigNum=figNum))
 %
 %      All inputs are Name=Value pairs, in any order. N is the number of
 %      objects (rows).
@@ -67,8 +75,15 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %
 %      Alpha: N x 1 opacity from 0 to 1 (or one value for all). Default 1.
 %
-%      Size: N x 3 [length width height] of far boxes; NaN rows (the
-%      default) take the size of the object's mesh.
+%      Size: N x 3 [length width height] of far boxes and simple
+%      shapes; NaN rows (the default) take the size of the object's mesh.
+%
+%      Level: N x 1 detail level of middle and far objects: an index into
+%      the mesh's Levels, 0 for the full mesh, or NaN (the default) to
+%      choose from ScreenSize. Ignored for near objects.
+%
+%      ScreenSize: N x 1 size on screen, pixels (as the selector works it
+%      out), or NaN (the default).
 %
 %      AppendTo: a display list to add these objects to (for example,
 %      the ego vehicle then the traffic). Instance names must stay
@@ -85,9 +100,10 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %           Objects: structure array of near and middle objects, with
 %               fields Instance, MeshID, Tier, Pose (1 x 6), WheelSpin,
 %               SteerAngle, WheelLift, BodyRoll, BodyPitch, BodyHeave,
-%               LightStates, Color, Alpha
-%           Boxes: the far objects, as arrays: Instance (cell), MeshID
-%               (cell), Pose (M x 6), Size (M x 3), Color (M x 3)
+%               LightStates, Color, Alpha, Level, ScreenSize
+%           Boxes: the far objects (merged), as arrays: Instance (cell),
+%               MeshID (cell), Pose (M x 6), Size (M x 3), Color (M x 3),
+%               Level (M x 1), ScreenSize (M x 1)
 %
 % DEPENDENCIES:
 %
@@ -110,6 +126,11 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillDisplayList
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillDisplayList
+%   % * Added Level and ScreenSize (for detail levels); the far tier is now
+%   %   % reduced meshes merged in one patch
 
 % TO-DO:
 %
@@ -141,6 +162,8 @@ arguments
     options.Color = []           % N x 3 (or 1 x 3); NaN keeps mesh colors
     options.Alpha = []           % N x 1 (or one value)
     options.Size = []            % N x 3 box sizes; NaN uses the mesh size
+    options.Level = []           % N x 1 detail levels; NaN chooses from ScreenSize
+    options.ScreenSize = []      % N x 1 sizes on screen, pixels
     options.AppendTo = []        % a display list to add to
     options.FigNum = []          % figure to plot from above; -1 for fast mode
 end
@@ -224,7 +247,8 @@ if 0==flag_max_speed
         end
 
         % Check the sized numeric inputs
-        sizedInputs = {'WheelSpin',4; 'SteerAngle',2; 'WheelLift',4; 'BodyRoll',1; 'BodyPitch',1; 'BodyHeave',1; 'Size',3};
+        sizedInputs = {'WheelSpin',4; 'SteerAngle',2; 'WheelLift',4; 'BodyRoll',1; 'BodyPitch',1; 'BodyHeave',1; 'Size',3; ...
+            'Level',1; 'ScreenSize',1};
         for ith_input = 1:size(sizedInputs,1)
             thisValue = options.(sizedInputs{ith_input,1});
             if ~isempty(thisValue) && (~isnumeric(thisValue) || ~isequal(size(thisValue),[Ncheck sizedInputs{ith_input,2}]))
@@ -246,7 +270,8 @@ if 0==flag_max_speed
         end
 
         % Check the AppendTo input
-        if ~isempty(options.AppendTo) && ~(isstruct(options.AppendTo) && all(isfield(options.AppendTo,{'Time','Objects','Boxes'})))
+        if ~isempty(options.AppendTo) && ~(isstruct(options.AppendTo) && all(isfield(options.AppendTo,{'Time','Objects','Boxes'})) ...
+                && isfield(options.AppendTo.Boxes,'Level'))
             error('AppendTo must be a display list');
         end
         if ~isempty(options.AppendTo)
@@ -316,6 +341,8 @@ if isempty(options.Size)
 else
     sizes = options.Size;
 end
+levels = fcn_INTERNAL_orNaN(options.Level, N);
+screenSizes = fcn_INTERNAL_orNaN(options.ScreenSize, N);
 
 % Start from AppendTo, or an empty list
 if isempty(options.AppendTo)
@@ -323,7 +350,7 @@ if isempty(options.AppendTo)
     displayList.Time = options.Time;
     displayList.Objects = repmat(fcn_INTERNAL_emptyObject, 0, 1);
     displayList.Boxes = struct('Instance',{cell(0,1)}, 'MeshID',{cell(0,1)}, ...
-        'Pose',zeros(0,6), 'Size',zeros(0,3), 'Color',zeros(0,3));
+        'Pose',zeros(0,6), 'Size',zeros(0,3), 'Color',zeros(0,3), 'Level',zeros(0,1), 'ScreenSize',zeros(0,1));
 else
     displayList = options.AppendTo;
 end
@@ -349,6 +376,8 @@ for ith_object = 1:numel(objectRows)
     end
     newObjects(ith_object).Color = colors(row,:);
     newObjects(ith_object).Alpha = alphas(row);
+    newObjects(ith_object).Level = levels(row);
+    newObjects(ith_object).ScreenSize = screenSizes(row);
 end
 displayList.Objects = [displayList.Objects(:); newObjects];
 
@@ -359,6 +388,8 @@ displayList.Boxes.MeshID = [displayList.Boxes.MeshID(:); meshIDs(boxRows)];
 displayList.Boxes.Pose = [displayList.Boxes.Pose; poses(boxRows,:)];
 displayList.Boxes.Size = [displayList.Boxes.Size; sizes(boxRows,:)];
 displayList.Boxes.Color = [displayList.Boxes.Color; colors(boxRows,:)];
+displayList.Boxes.Level = [displayList.Boxes.Level; levels(boxRows)];
+displayList.Boxes.ScreenSize = [displayList.Boxes.ScreenSize; screenSizes(boxRows)];
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -431,7 +462,7 @@ function emptyObject = fcn_INTERNAL_emptyObject
 emptyObject = struct('Instance','', 'MeshID','', 'Tier','near', 'Pose',zeros(1,6), ...
     'WheelSpin',zeros(1,4), 'SteerAngle',zeros(1,2), 'WheelLift',zeros(1,4), ...
     'BodyRoll',0, 'BodyPitch',0, 'BodyHeave',0, 'LightStates',[], ...
-    'Color',nan(1,3), 'Alpha',1);
+    'Color',nan(1,3), 'Alpha',1, 'Level',NaN, 'ScreenSize',NaN);
 end % Ends fcn_INTERNAL_emptyObject
 
 %% fcn_INTERNAL_expandCell
@@ -443,6 +474,16 @@ if numel(values)==1
     values = repmat(values, N, 1);
 end
 end % Ends fcn_INTERNAL_expandCell
+
+%% fcn_INTERNAL_orNaN
+function values = fcn_INTERNAL_orNaN(input, N)
+% The input as an N x 1 column, or NaN if it was not given
+if isempty(input)
+    values = nan(N,1);
+else
+    values = input(:);
+end
+end % Ends fcn_INTERNAL_orNaN
 
 %% fcn_INTERNAL_orZeros
 function values = fcn_INTERNAL_orZeros(input, N, Ncolumns)
