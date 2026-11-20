@@ -4,7 +4,7 @@ Fast 3D animation of scenes with many vehicles in MATLAB: decision branches, sur
 
 AnimateCar3D builds on [CarMesh3D](https://github.com/ivsg-psu/VehicleSimulations_VehiclePlotting_CarMesh3D), which makes, views, and checks the mesh of one vehicle at a time. AnimateCar3D uses CarMesh3D's vehicle meshes and plotting functions, and adds everything needed for many objects in one scene.
 
-> **Status:** prototype (2026_11_20). Steps 0 to 5 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes; and each object's detail is set by its [size on screen](#detail-levels-set-by-size-on-screen-step-5), from a ladder of reduced meshes made by CarMesh3D (release `CarMesh3D_2026_11_20`). Next: see the [TO-DO](#to-do) list.
+> **Status:** prototype (2026_11_20). Steps 0 to 6 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes; and each object's detail is set by its [size on screen](#detail-levels-set-by-size-on-screen-step-5), from a ladder of reduced meshes made by CarMesh3D (release `CarMesh3D_2026_11_20`); and path lines show where objects have been and will go. Next: see the [TO-DO](#to-do) list.
 
 | One vehicle splitting into ten decision branches | A confederate's three maneuvers, and the ego's three responses |
 |---|---|
@@ -17,6 +17,10 @@ AnimateCar3D builds on [CarMesh3D](https://github.com/ivsg-psu/VehicleSimulation
 | Live data from a watched folder; the display criteria edited while running | Pedestrians at a crosswalk, and a parking gate that rises |
 |---|---|
 | ![Live folder](Images/live_watchedFolder.gif) | ![Pedestrians and a gate](Images/pedestrians_crosswalkGate.gif) |
+
+| Path lines: (a) the defaults; (b) thin previews, ribbons, a branch palette, and markers |
+|---|
+| ![Path line options](Images/pathLines_options.gif) |
 
 ## Getting started
 
@@ -215,6 +219,8 @@ fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear')
 | `BodyPitch` | | K x 1 | rad | body pitch, + nose down |
 | `BodyHeave` | | K x 1 | m | body heave, + up |
 | `LightStates` | | K x 1 structure | | light states, as from `fcn_CarMesh3D_loadMotionCSV` |
+| `PathColor` | | K x 3 or K x 1 | | the path line's color at each instant: K x 3 an RGB color; K x 1 a value (speed, threat, ...) colored through `PathColormap` (see [Path lines](#path-lines-step-6)) |
+| `PathMarker` | | K x 1 | | markers on the path line: 0 for none; n for the display criteria's `MarkerStyles{n}` |
 
 Other fields are ignored, so motions from `fcn_CarMesh3D_loadMotionCSV` (with an `Instance` added) or `fcn_AnimateCar3D_fillBranchMotions` can be given as they are. A field spelled like a template field but differently (`Wheelspin`, `wheel_spin`) is an error that names the right spelling, and a field of the wrong size is an error that names the object and the expected size.
 
@@ -253,7 +259,7 @@ The selector returns its state for the next step: each drawn object's tier and l
 
 ### The demos
 
-- **A confederate with branches, and the ego's responses** (`script_demo_AnimateCar3D.m`, step 5): a van comes up a side street. At 2.5 s it splits into three maneuvers: it stops, it crosses the road, or it turns right onto the road ahead of the ego. At 3 s the ego splits into three responses, each linked by `respondsTo` to the maneuver it answers: carry on, brake hard, or slow and change lanes. Each maneuver and its response share a color, and brake lights come on when slowing. The motions are given in memory, and the cube grid is the static scene.
+- **A confederate with branches, and the ego's responses** (`script_demo_AnimateCar3D.m`, step 5): a van comes up a side street. At 2.5 s it splits into three maneuvers: it stops, it crosses the road, or it turns right onto the road ahead of the ego. At 3 s the ego splits into three responses, each linked by `respondsTo` to the maneuver it answers: carry on, brake hard, or slow and change lanes. Each maneuver and its response share a color, and brake lights come on when slowing; each branch's trail is drawn in its color from the split point (path lines, the default). The motions are given in memory, and the cube grid is the static scene.
 - **Dense traffic from one file, with a panning camera** (step 6): 300 vehicles on a four-lane road from `Data/traffic_fourLaneRoad.csv`. Every fourth vehicle is a van, about one in eight is a truck drawn as a 12 m box, and cars come in six colors. The camera pans at 6 m/s while the ego drives at 13 m/s, so the ego enters the view and then leaves it. Only what the camera sees is drawn, with detail set by distance from the camera.
 
 ## Live use (step 3)
@@ -327,6 +333,41 @@ Objects with no vehicle mesh are drawn as **simple shapes** (`fcn_AnimateCar3D_f
 
 **The demo** (step 8): the ego slows and stops before a crosswalk while seven pedestrians cross (six one way, one the other, each starting at its own time), then drives on to a parking gate whose arm rises as it comes near. Posts along the sidewalks are static cylinders. The camera follows the ego.
 
+## Path lines (step 6)
+
+Path lines show where objects have been (a **trail**) and, optionally, where they will go (a **preview**), drawn on the ground. The selector lists them in the display list (`displayList.Paths`, with `displayList.PathStyle`), chosen by the display criteria, and the player draws them, so a scene loop gets them with no extra code. A script can also add its own paths to a display list.
+
+![Path line options: (a) the defaults; (b) thin previews, ribbons with a center line, a branch palette, and markers on both](Images/pathLines_options.gif)
+
+**Which objects.** When any member of a **family** (a parent and its branches) is drawn, every member's path is drawn (`BranchPaths`, on by default), so the alternatives can be compared. Other roles get paths while they are drawn if listed in `PathRoles` (for example `{'ego','pedestrian'}`). **At a split, each branch's line starts at the split point and its parent's line runs up to it**: this is fixed, not an option, so the picture is never ambiguous.
+
+**The settings** (display criteria; defaults in brackets):
+
+| Setting | Default | Choices |
+|---|---|---|
+| `BranchPaths` | true | paths for every member of a drawn family |
+| `PathRoles` | {} | other roles with paths while drawn |
+| `PathTrail` | true | draw trails |
+| `PathPreview` | 'none' | 'none', 'thin' (half as wide), or 'same' (as the trail). Live objects have no known future, so no preview |
+| `TrailSeconds`, `PreviewSeconds` | Inf, Inf | how far back a trail and how far ahead a preview reach |
+| `PathLineType` | 'line' | 'line' (screen lines: the same width in points at any distance), 'ribbon' (strips on the ground that shrink with distance, like paint), or 'ribbonAndLine' (a ribbon with a 1 pt line down its middle, which never breaks up far away, where a thin ribbon would) |
+| `PathLineWidth`, `PathRibbonWidth` | 2 pt, 0.6 m | |
+| `PathColorPolicy` | 'object' | 'object' (the object's tint), 'branch' (`PathPalette` by branch number, so branch 2 of the ego and branch 2 of another vehicle match), 'family' (the root object's color), or 'fixed' (`PathColor`) |
+| `PathColor` | dark gray | for 'fixed', and for objects drawn in their mesh's own colors |
+| `PathPalette` | MATLAB's `lines` colors without the yellow | for 'branch' |
+| `PathColormap`, `PathColorLimits` | blue, purple, red; [] | for values (below); [] means the range of all values in the catalog, fixed for the whole scene so colors do not shift as it plays |
+| `MarkerStyles`, `MarkerOn` | {{'Marker','o','MarkerSize',6}}, 'trail' | a list of marker styles (each a cell array of line property Name, Value pairs); markers on the 'trail', 'preview', or 'both' |
+
+The defaults avoid white and yellow lines, which look like lane markings.
+
+**Your own colors and markers** come with each object's motion (see the motion template in [Input files](#input-files)):
+- `PathColor`, K x 3: an RGB color at each instant; or K x 1: a value at each instant (speed, the "threat" seen by a maneuver, ...) colored through `PathColormap`. AnimateCar3D only draws these; computing them is up to you. An object with its own `PathColor` is always drawn in it, whatever `PathColorPolicy` says.
+- `PathMarker`, K x 1: 0 for no marker, or n to draw `MarkerStyles{n}` at that instant, for example `MarkerStyles={{'Marker','o'}, {'Marker','s','MarkerSize',20,'Color',[1 0 0]}}` with 1 where the ego starts braking and 2 where a threat passes a limit. A style without `'Color'` takes the path's color there. An index past the list is an error that names the object.
+
+**The demo** (step 9): the same scenario twice, side by side: (a) the defaults, with the ego's trail colored by its speed (8 to 14 m/s); (b) thin previews, ribbons with a center line, the branch palette, and markers on both (a circle at 2 s, a square at 5 s). A van ahead has three maneuvers from 3 s: keep its lane, move left, or cut in.
+
+**How the choices were made.** Ribbons and screen lines were compared on one scene (screen lines are cleanest at every distance but give no sense of depth; ribbons look like paint near the camera but break up far away; a ribbon with a center line keeps both); all three are options, with screen lines the default. Dashed lines were ruled out.
+
 ## Folders
 
 | Folder | Contents |
@@ -375,6 +416,7 @@ Every object in a scene (the ego vehicle, traffic, pedestrians, gates, buildings
 3. **Live use** (done): display criteria changed while running (from a script, or a file in the watched folder); the watched-folder source; a test helper that adds and removes files in a watched folder (see [Live use](#live-use-step-3)).
 4. **Pedestrians and moving items** (done), as simple shapes first (see [Pedestrians and moving items](#pedestrians-and-moving-items-step-4)).
 5. **Detail levels set by size on screen** (done): any number of levels, chosen by each object's size in pixels, from a ladder of reduced meshes made by CarMesh3D (see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5)).
+6. **Path lines** (done): trails and previews on the ground, with color policies, your own colors and markers, and screen lines or ribbons (see [Path lines](#path-lines-step-6)).
 
 Out of scope: a 2D (top-down) mode. It needs different inputs (XY outlines, not XYZ meshes), which CarMesh3D does not make yet, so it will be a separate repository; the outlines are listed in CarMesh3D's TO-DO.
 
@@ -613,13 +655,13 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 1. **A live-loop function** (`fcn_AnimateCar3D_playLive`, say) for the loop in [Live use](#live-use-step-3): watch the folder, update the catalog, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
 2. **Incremental reading in `fcn_AnimateCar3D_watchFolder`:** it reads a grown file whole at each check; for long runs it should read only the new rows.
 3. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
-4. **Path lines for branches** (needs design first): should the player draw them, or should they be objects in the display list like any other? The demo draws them itself for now.
-
 **Done recently** (2026_11_20)
+- Path lines (step 6): the selector lists them, the player draws them; trails and previews, color policies, your own colors and markers, screen lines or ribbons. See [Path lines](#path-lines-step-6).
 - Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog` and `fcn_AnimateCar3D_updateCatalog`, each motion with only its own fields, checked against a documented motion template (returned or printed by `fcn_AnimateCar3D_buildCatalog()` with no inputs). See [Input files](#input-files).
 
 ### Someday
 
+- Trails that fade with age (path lines).
 - **Simple road assets** to place in scenes: trees, stop signs, curbs, simple buildings, and so on. They may go into their own repository (RoadAssetPlotting, say), once the CarMesh3D work is finished, since they should follow CarMesh3D's structure and workflow (a folder per asset, a standard script, standard checks). For now, AnimateCar3D's simple shapes (boxes, bars, cylinders, pedestrians) stand in.
 - **A scenario-building function:** the demos' simple motion maker (`fcn_INTERNAL_integrateMotion`: speed and curvature over time, with brake lights) could become a function for building scenarios, that is, how each object moves over time.
 - **Limiting the levels used by separately drawn vehicles** (every other level, say), since a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Reconsider if a scene has many vehicles switching levels at once (for example, a camera moving fast).

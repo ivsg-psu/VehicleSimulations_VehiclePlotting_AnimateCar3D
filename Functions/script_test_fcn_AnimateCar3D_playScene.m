@@ -225,10 +225,66 @@ assert(mean(sum(rightHandNormals.*sampleLevels(1).Mesh.FaceNormals,2) < 0) > 0.9
 playerState = fcn_AnimateCar3D_playScene(levelList(2), meshSet, PlayerState=playerState);
 assert(strcmp(get(playerState.MergedPatch,'Visible'),'off') && strcmp(get(playerState.BoxPatch,'Visible'),'off'));
 
+%% TEST case: Path lines: screen lines, ribbons, colors at each point, and markers
+figNum = 20006;
+titleString = sprintf('TEST case: Path lines: screen lines, ribbons, colors at each point, and markers');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); clf;
+fcn_CarMesh3D_plotScene(GroundExtent=[-10 60 -20 20], FigNum=figNum);
+view(-30,25);
+pathX = (0:2:40)';
+pathXYZ = [pathX, 0.05*pathX.^1.2, zeros(size(pathX))];
+pointColors = [linspace(0,1,numel(pathX))', zeros(numel(pathX),1), linspace(1,0,numel(pathX))'];
+pathList = fcn_AnimateCar3D_fillDisplayList(Instance='car', MeshID='sample', Pose=[40 0 0]);
+pathList.Paths = struct('Instance',{'car','car','other'}, 'Kind',{'trail','preview','trail'}, ...
+    'XYZ',{pathXYZ(1:11,:), pathXYZ(11:end,:), pathXYZ(1:11,:) + [0 -5 0]}, ...
+    'Color',{pointColors(1:11,:), pointColors(11:end,:), [0.2 0.5 0.3]}, ...
+    'MarkerXYZ',{pathXYZ([3 6],:), zeros(0,3), pathXYZ(4,:) + [0 -5 0]}, 'MarkerStyle',{[1;2], zeros(0,1), 2})';
+pathList.PathStyle = struct('LineType','line', 'LineWidth',3, 'RibbonWidth',0.6, 'Preview','thin', ...
+    'MarkerStyles',{{{'Marker','o'}, {'Marker','s','MarkerSize',12,'Color',[1 0 0]}}});
+playerState = fcn_AnimateCar3D_playScene(pathList, meshSet, FigNum=figNum);
+assert(playerState.Stats.NumPaths==3);
+trailGraphics = playerState.PathLines('car|trail');
+previewGraphics = playerState.PathLines('car|preview');
+% Lines: open patches, a color at each point, the preview half as wide
+assert(strcmp(get(trailGraphics.Line,'EdgeColor'),'interp') && size(get(trailGraphics.Line,'Vertices'),1)==12);
+assert(isequaln(get(trailGraphics.Line,'FaceVertexCData'), [pointColors(1:11,:); NaN NaN NaN]));
+assert(get(trailGraphics.Line,'LineWidth')==3 && get(previewGraphics.Line,'LineWidth')==1.5);
+assert(~isgraphics(trailGraphics.Ribbon));
+% Markers: style 1 takes the path's color there; style 2 its own red
+assert(numel(trailGraphics.Markers)==2);
+markerColors = reshape([trailGraphics.Markers.Color],3,[])';
+assert(ismember(pointColors(3,:), markerColors, 'rows') && ismember([1 0 0], markerColors, 'rows'));
+otherGraphics = playerState.PathLines('other|trail');
+assert(isequal(get(otherGraphics.Line,'EdgeColor'),'interp') && isequal(otherGraphics.Markers.Color,[1 0 0]));
+% Ribbons with a center line; the same graphics are reused
+lineHandle = trailGraphics.Line;
+pathList.PathStyle.LineType = 'ribbonAndLine';
+playerState = fcn_AnimateCar3D_playScene(pathList, meshSet, PlayerState=playerState);
+trailGraphics = playerState.PathLines('car|trail');
+assert(isequal(trailGraphics.Line, lineHandle) && get(trailGraphics.Line,'LineWidth')==1);
+ribbonVertices = get(trailGraphics.Ribbon,'Vertices');
+assert(size(ribbonVertices,1)==22 && abs(norm(ribbonVertices(1,1:2) - ribbonVertices(12,1:2)) - 0.6) < 0.01);   % 0.6 m wide
+previewRibbon = get(playerState.PathLines('car|preview').Ribbon,'Vertices');
+assert(abs(norm(previewRibbon(1,1:2) - previewRibbon(12,1:2)) - 0.3) < 0.01);                                   % thin: 0.3 m
+% Ribbons only: the line is hidden
+pathList.PathStyle.LineType = 'ribbon';
+playerState = fcn_AnimateCar3D_playScene(pathList, meshSet, PlayerState=playerState);
+assert(strcmp(get(playerState.PathLines('car|trail').Line,'Visible'),'off'));
+% A path no longer listed is hidden (its markers removed)
+pathList.Paths = pathList.Paths(1);
+playerState = fcn_AnimateCar3D_playScene(pathList, meshSet, PlayerState=playerState);
+assert(strcmp(get(playerState.PathLines('other|trail').Ribbon,'Visible'),'off') && isempty(playerState.PathLines('other|trail').Markers));
+% A list with no paths hides them all
+playerState = fcn_AnimateCar3D_playScene(fcn_AnimateCar3D_fillDisplayList(Instance='car', MeshID='sample', Pose=[40 0 0]), ...
+    meshSet, PlayerState=playerState);
+assert(playerState.Stats.NumPaths==0 && strcmp(get(playerState.PathLines('car|trail').Ribbon,'Visible'),'off'));
+
 %% TEST case: Clear deletes everything
 playerState = fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
 assert(isempty(playerState.Pool));
 assert(isempty(findobj(gca,'Type','hgtransform')));
+assert(isempty(findobj(gca,'-regexp','Tag','AnimateCar3D path')));
 
 %% TEST case: Simple shapes: pedestrians, a raised gate arm, posts, and a far car
 figNum = 20005;

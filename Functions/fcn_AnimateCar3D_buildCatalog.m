@@ -145,6 +145,8 @@ function catalog = fcn_AnimateCar3D_buildCatalog(sceneList, options)
 %   %   % unknown field spelled like a template field is an error; a field of
 %   %   % the wrong size is reported with its object's name); with no inputs,
 %   %   % the function returns (or prints) the motion template
+%   % * Motion fields PathColor and PathMarker (path lines); the cache is
+%   %   % rebuilt for a catalog with another motion format
 
 % TO-DO:
 %
@@ -555,6 +557,8 @@ fieldRows = {
     'BodyPitch',   false, 1,     'double', 'rad',   'body pitch, + nose down'
     'BodyHeave',   false, 1,     'double', 'm',     'body heave, + up'
     'LightStates', false, 1,     'struct', '-',     'light states (a K x 1 structure array, as from fcn_CarMesh3D_loadMotionCSV)'
+    'PathColor',   false, [3 1], 'double', '-',     'path line color at each instant: K x 3 RGB, or K x 1 values colored through PathColormap'
+    'PathMarker',  false, 1,     'double', '-',     'path line markers: 0 none; n for MarkerStyles{n} (display criteria)'
     };
 motionTemplate = struct;
 for ith_field = 1:size(fieldRows,1)
@@ -621,7 +625,7 @@ end % Ends fcn_INTERNAL_motionList
 function motion = fcn_INTERNAL_emptyMotion
 % One full motion, with every field the selector reads
 motion = struct('Time',zeros(0,1), 'Pose',zeros(0,6), 'WheelSpin',[], 'SteerAngle',[], ...
-    'WheelLift',[], 'BodyRoll',[], 'BodyPitch',[], 'BodyHeave',[], 'LightStates',[]);
+    'WheelLift',[], 'BodyRoll',[], 'BodyPitch',[], 'BodyHeave',[], 'LightStates',[], 'PathColor',[], 'PathMarker',[]);
 end % Ends fcn_INTERNAL_emptyMotion
 
 %% fcn_INTERNAL_normalizeMotion
@@ -691,6 +695,9 @@ for ith_field = 1:numel(givenNames)
         error('AnimateCar3D:motionSize', 'The motion of %s: %s is %d x %d; expected %s', motionName, givenName, ...
             size(value,1), size(value,2), expectedText);
     end
+    if strcmp(givenName,'PathMarker') && any(value(:)<0 | value(:)~=round(value(:)))
+        error('AnimateCar3D:motionSize', 'The motion of %s: PathMarker must be 0 (none) or a positive integer (a MarkerStyles index)', motionName);
+    end
     switch givenName
         case 'Time'
             motion.Time = double(value(:));
@@ -753,6 +760,7 @@ function signature = fcn_INTERNAL_signature(sceneList, motions, staticScene, set
 % A summary of the inputs: same summary, same catalog
 signature = struct;
 signature.Instances = {sceneList.Instance};
+signature.MotionFields = fieldnames(fcn_INTERNAL_emptyMotion)';     % (a cache from another motion format is rebuilt)
 signature.SceneFields = {{sceneList.Role}, {sceneList.MeshID}, {sceneList.BranchOf}, [sceneList.BranchID], ...
     {sceneList.RespondsTo}, [sceneList.TimeOffset], [sceneList.SplitTime], [sceneList.Color], [sceneList.Alpha], [sceneList.Size]};
 fileDates = zeros(numel(sceneList),2);

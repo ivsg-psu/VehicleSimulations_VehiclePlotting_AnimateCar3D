@@ -104,6 +104,10 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %           Boxes: the far objects (merged), as arrays: Instance (cell),
 %               MeshID (cell), Pose (M x 6), Size (M x 3), Color (M x 3),
 %               Level (M x 1), ScreenSize (M x 1)
+%           Paths: path lines on the ground, a structure array with fields
+%               Instance, Kind ('trail' or 'preview'), XYZ (N x 3 points),
+%               and Color; empty here (fcn_AnimateCar3D_selectObjects fills
+%               it; a script may add its own)
 %
 % DEPENDENCIES:
 %
@@ -129,6 +133,7 @@ function displayList = fcn_AnimateCar3D_fillDisplayList(options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillDisplayList
+%   % * Added Paths (empty; the selector fills it)
 %   % * Added Level and ScreenSize (for detail levels); the far tier is now
 %   %   % reduced meshes merged in one patch
 
@@ -348,11 +353,15 @@ screenSizes = fcn_INTERNAL_orNaN(options.ScreenSize, N);
 if isempty(options.AppendTo)
     displayList = struct;
     displayList.Time = options.Time;
+    displayList.Paths = struct('Instance',{}, 'Kind',{}, 'XYZ',{}, 'Color',{});
     displayList.Objects = repmat(fcn_INTERNAL_emptyObject, 0, 1);
     displayList.Boxes = struct('Instance',{cell(0,1)}, 'MeshID',{cell(0,1)}, ...
         'Pose',zeros(0,6), 'Size',zeros(0,3), 'Color',zeros(0,3), 'Level',zeros(0,1), 'ScreenSize',zeros(0,1));
 else
     displayList = options.AppendTo;
+    if ~isfield(displayList,'Paths')
+        displayList.Paths = struct('Instance',{}, 'Kind',{}, 'XYZ',{}, 'Color',{});
+    end
 end
 
 % Near and middle objects

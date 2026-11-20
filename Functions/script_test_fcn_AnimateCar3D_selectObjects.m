@@ -284,6 +284,144 @@ for ith_step = 1:numel(pullTime)
 end
 assert(flagKeptLonger);
 
+%% TEST case: Path lines for a family of branches: trails, previews, and the split
+figNum = 20005;
+titleString = sprintf('TEST case: Path lines for a family of branches: trails, previews, and the split');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+allObjectNames = {catalog.Objects.Instance};
+poseAt = @(name, t) fcn_INTERNAL_poseAt(catalog, allObjectNames, name, t);
+pathOf = @(displayList, name, kind) displayList.Paths(strcmp({displayList.Paths.Instance},name) & strcmp({displayList.Paths.Kind},kind));
+
+% Defaults (trails only): before the split (1 s), only the parent's trail
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100);
+[displayList, state] = fcn_AnimateCar3D_selectObjects(catalog, 1, criteria);
+assert(isequal({displayList.Paths.Instance}, {'conf1'}) && isequal({displayList.Paths.Kind}, {'trail'}) && state.Stats.NumPaths==1);
+parentTrail = pathOf(displayList,'conf1','trail');
+assert(norm(parentTrail.XYZ(1,:) - poseAt('conf1',0)) < 1e-9 && norm(parentTrail.XYZ(end,:) - poseAt('conf1',1)) < 1e-9);
+assert(isequal(parentTrail.Color, criteria.ConfederateColor));
+assert(strcmp(displayList.PathStyle.LineType,'line') && displayList.PathStyle.LineWidth==2);
+
+% With previews: each branch's preview starts where the parent's path
+% ends (the split point)
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathPreview='thin');
+[displayList, state] = fcn_AnimateCar3D_selectObjects(catalog, 1, criteria);
+assert(state.Stats.NumPaths==4 && strcmp(displayList.PathStyle.Preview,'thin'));
+parentPreview = pathOf(displayList,'conf1','preview');
+for branchName = {'conf1_branch1','conf1_branch2'}
+    assert(isempty(pathOf(displayList, branchName{1}, 'trail')));
+    assert(norm(pathOf(displayList, branchName{1}, 'preview').XYZ(1,:) - parentPreview.XYZ(end,:)) < 1e-9);
+end
+
+% After the split (5 s): the parent's trail ends at the split point; each
+% branch's trail starts there; its preview runs to its end (8 s)
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(isempty(pathOf(displayList,'conf1','preview')));
+parentTrail = pathOf(displayList,'conf1','trail');
+branchTrail = pathOf(displayList,'conf1_branch1','trail');
+assert(norm(branchTrail.XYZ(1,:) - parentTrail.XYZ(end,:)) < 1e-9);
+assert(norm(branchTrail.XYZ(end,:) - poseAt('conf1_branch1',5)) < 1e-9);
+assert(norm(pathOf(displayList,'conf1_branch1','preview').XYZ(end,:) - poseAt('conf1_branch1',8)) < 1e-9);
+
+% TrailSeconds and PreviewSeconds: 1 s back and 1 s ahead
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathPreview='same', TrailSeconds=1, PreviewSeconds=1);
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(norm(pathOf(displayList,'conf1_branch1','trail').XYZ(1,:) - poseAt('conf1_branch1',4)) < 1e-9);
+assert(norm(pathOf(displayList,'conf1_branch1','preview').XYZ(end,:) - poseAt('conf1_branch1',6)) < 1e-9);
+assert(isempty(pathOf(displayList,'conf1','trail')));          % the parent ended 2 s ago
+
+% Previews only (no trails); no branch paths; the ego's path by role
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathTrail=false, PathPreview='same');
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(~isempty(displayList.Paths) && all(strcmp({displayList.Paths.Kind},'preview')));
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, BranchPaths=false);
+[displayList, state] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(isempty(displayList.Paths) && state.Stats.NumPaths==0);
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, BranchPaths=false, PathRoles={'ego'});
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+egoTrail = pathOf(displayList,'ego','trail');
+assert(numel(displayList.Paths)==1 && norm(egoTrail.XYZ(end,:) - poseAt('ego',5)) < 1e-9);
+
+% Color policies: 'branch' (palette by branch number; the parent keeps
+% its tint), 'fixed', and 'family'
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathColorPolicy='branch');
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(isequal(pathOf(displayList,'conf1_branch1','trail').Color, criteria.PathPalette(1,:)));
+assert(isequal(pathOf(displayList,'conf1_branch2','trail').Color, criteria.PathPalette(2,:)));
+assert(isequal(pathOf(displayList,'conf1','trail').Color, criteria.ConfederateColor));
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathColorPolicy='fixed', PathColor=[0.2 0.4 0.6]);
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(all(cellfun(@(c) isequal(c,[0.2 0.4 0.6]), {displayList.Paths.Color})));
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100, PathColorPolicy='family', ConfederateColor=[0.5 0 0.5]);
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
+assert(all(cellfun(@(c) isequal(c,[0.5 0 0.5]), {displayList.Paths.Color})));
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
+
+%% TEST case: Path lines with the user's colors (values or RGB) and markers
+figNum = 20006;
+titleString = sprintf('TEST case: Path lines with the user''s colors (values or RGB) and markers');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+% A car speeding up from 5 to 15 m/s over 10 s: its speed colors its
+% path; markers at 2 s (style 1) and 4 s and 8 s (style 2)
+userTime = (0:0.5:10)';
+userSpeed = 5 + userTime;
+userMarker = zeros(size(userTime));
+userMarker(userTime==2) = 1;
+userMarker(userTime==4 | userTime==8) = 2;
+userMotion = struct('Instance','car', 'Time',userTime, 'Pose',[cumsum([0; diff(userTime)].*userSpeed), zeros(numel(userTime),2)], ...
+    'PathColor',userSpeed, 'PathMarker',userMarker);
+userCatalog = fcn_AnimateCar3D_buildCatalog(fcn_AnimateCar3D_loadSceneList(struct('instance','car','role','ego')), ...
+    Motions={userMotion});
+markerStyles = {{'Marker','o'}, {'Marker','s','MarkerSize',12,'Color',[1 0 0]}};
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Center=[0 0], Radius=500, BranchPaths=false, PathRoles={'ego'}, ...
+    PathPreview='thin', MarkerStyles=markerStyles);
+[displayList, state] = fcn_AnimateCar3D_selectObjects(userCatalog, 5, criteria);
+userTrail = displayList.Paths(strcmp({displayList.Paths.Kind},'trail'));
+userPreview = displayList.Paths(strcmp({displayList.Paths.Kind},'preview'));
+% A color at each point: the slowest (5 m/s, the scene's lowest value) at
+% the colormap's start; at 5 s, 10 m/s, its middle
+assert(size(userTrail.Color,1)==size(userTrail.XYZ,1));
+assert(isequal(userTrail.Color(1,:), criteria.PathColormap(1,:)));
+assert(isequal(userTrail.Color(end,:), criteria.PathColormap(round(1 + 0.5*255),:)));
+assert(isequal(userPreview.Color(end,:), criteria.PathColormap(end,:)));
+assert(isequal(state.PathValueLimits(1:2), [5 15]));
+% Markers on the trail (the default): 2 s (style 1) and 4 s (style 2)
+assert(isequal(userTrail.MarkerStyle, [1; 2]) && isempty(userPreview.MarkerStyle));
+assert(norm(userTrail.MarkerXYZ(2,:) - userMotion.Pose(userTime==4,:)) < 1e-9);
+% On both: 8 s goes with the preview
+criteria.MarkerOn = 'both';
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(userCatalog, 5, criteria);
+userPreview = displayList.Paths(strcmp({displayList.Paths.Kind},'preview'));
+assert(isequal(userPreview.MarkerStyle, 2));
+% Given limits; and RGB colors
+criteria.PathColorLimits = [0 30];
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(userCatalog, 5, criteria);
+assert(isequal(displayList.Paths(1).Color(end,:), criteria.PathColormap(round(1 + (10/30)*255),:)));
+rgbMotion = userMotion;
+rgbMotion.PathColor = [linspace(0,1,numel(userTime))', zeros(numel(userTime),1), linspace(1,0,numel(userTime))'];
+rgbCatalog = fcn_AnimateCar3D_buildCatalog(fcn_AnimateCar3D_loadSceneList(struct('instance','car','role','ego')), Motions={rgbMotion});
+[displayList, ~] = fcn_AnimateCar3D_selectObjects(rgbCatalog, 5, criteria);
+assert(norm(displayList.Paths(1).Color(end,:) - [0.5 0 0.5]) < 1e-9);
+% A marker index past the style list is an error that names the object
+criteria.MarkerStyles = markerStyles(1);
+errorText = '';
+try
+    fcn_AnimateCar3D_selectObjects(userCatalog, 5, criteria);
+catch ME
+    errorText = ME.message;
+end
+assert(contains(errorText,'car') && contains(errorText,'MarkerStyles has only 1'));
+
+% Make sure plot did NOT open up
+figHandles = get(groot, 'Children');
+assert(~any(figHandles==figNum));
+
 %% TEST case: Static boxes are always far, and only nearby ones are drawn
 criteria = fcn_AnimateCar3D_fillDisplayCriteria(Region='circle', Radius=100);
 [displayList, ~] = fcn_AnimateCar3D_selectObjects(catalog, 5, criteria);
@@ -338,6 +476,13 @@ if 1==0
 end
 
 %% Functions follow
+function pose = fcn_INTERNAL_poseAt(catalog, objectNames, instanceName, sceneTime)
+% An object's [x y z] at a scene time, from its full motion in memory
+thisObject = catalog.Objects(strcmp(objectNames, instanceName));
+motion = catalog.Motions(thisObject.MotionIndex);
+pose = interp1(motion.Time + thisObject.TimeOffset, motion.Pose(:,1:3), sceneTime);
+end
+
 %% fcn_INTERNAL_addFields
 function rows = fcn_INTERNAL_addFields(rows, meshID)
 % Give scene list rows the same fields, so they can be joined

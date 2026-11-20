@@ -43,6 +43,8 @@
 %   %   % and the display criteria use sizes on screen, not distances
 %   % * Motions given as cell arrays where they have different fields
 %   %   % (steps 6 and 8), with no empty fields added
+%   % * Path lines drawn by the selector and player (step 5 no longer
+%   %   % draws its own); step 9, path line options
 
 
 % TO-DO:
@@ -288,7 +290,8 @@ catalog = fcn_AnimateCar3D_buildCatalog(sceneList, Motions=[egoMotion; egoRespon
 
 % Display criteria: the camera's view (the default), out to 250 m; each
 % object's detail is set by its size on screen. Confederates are drawn
-% in full, like the ego.
+% in full, like the ego. Path lines are on by default: each branch's
+% trail, in its color, from the split point (and each parent's, up to it).
 criteria = fcn_AnimateCar3D_fillDisplayCriteria(MaxDistance=250, ...
     FixedTiers={'ego','near'; 'confederate','near'}, BranchAlpha=0.55);
 
@@ -307,27 +310,12 @@ playerState = [];
 selectorState = [];
 gifFile = fullfile(pwd,'Images','confederate_branchesAndResponses.gif');
 gifFrame = 0;
-branchNames = {egoResponses.Instance, vanManeuvers.Instance};
-branchLines = gobjects(numel(branchNames),1);
 for ith_step = 1:numel(timeSteps)
     t = timeSteps(ith_step);
     [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, t, criteria, ...
         SelectorState=selectorState, Camera=gca, MeshSet=meshSet);
     playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=playerState, FigNum=figNum);
 
-    % Path lines on the ground for each branch, so far
-    for ith_branch = 1:numel(branchNames)
-        motion = [egoResponses; vanManeuvers];
-        motion = motion(ith_branch);
-        rows = motion.Time <= t + 1e-9;
-        if any(rows)
-            colorRow = mod(ith_branch-1,3)+1;
-            if ~isgraphics(branchLines(ith_branch))
-                branchLines(ith_branch) = line(NaN, NaN, NaN, 'Color', pairColors(colorRow,:), 'LineWidth', 2);
-            end
-            set(branchLines(ith_branch), 'XData', motion.Pose(rows,1), 'YData', motion.Pose(rows,2), 'ZData', 0.03*ones(sum(rows),1));
-        end
-    end
     fcn_INTERNAL_setCaption(gcf, sprintf('t = %.2f s', t));
     drawnow;
     if flag_saveGifs && mod(ith_step-1,2)==0
@@ -670,6 +658,87 @@ for ith_step = 1:numel(timeSteps)
     end
 end
 fcn_AnimateCar3D_playScene([], meshSet, PlayerState=playerState, Action='clear');
+
+
+%% Step 9. Path lines: the defaults, and some options
+% The selector lists path lines (displayList.Paths) and the player draws
+% them. The same scenario twice, side by side:
+%   (a) the defaults: trails only, each in its object's tint; the ego's
+%       path (PathRoles) colored by its own speed (its motion's
+%       PathColor, a value at each instant, through PathColormap)
+%   (b) thin previews (where each will go), ribbons with a center line,
+%       branch colors from a palette, and markers on both (the ego's
+%       motion's PathMarker: style 1 at 2 s, style 2 at 5 s)
+% The ego speeds up from 8 to 14 m/s; a van ahead in the left lane has
+% three maneuvers from 3 s: keep its lane, move left, or cut in.
+pathTime = (0:0.1:8)';
+pathSpeed = 8 + 6*min(pathTime/6, 1);
+pathX = cumtrapz(pathTime, pathSpeed);
+egoMarker = zeros(size(pathTime));
+egoMarker(abs(pathTime-2) < 1e-9) = 1;
+egoMarker(abs(pathTime-5) < 1e-9) = 2;
+egoPath = struct('Instance','ego', 'Time',pathTime, 'Pose',[pathX, -1.8*ones(size(pathTime)), zeros(size(pathTime))], ...
+    'WheelSpin',repmat(pathX/0.317,1,4), 'PathColor',pathSpeed, 'PathMarker',egoMarker);
+smoothStep = @(u) min(1,max(0,u)).^2.*(3 - 2*min(1,max(0,u)));
+parentTime = (0:0.1:3)';
+vanPath = struct('Instance','van', 'Time',parentTime, 'Pose',[22+10*parentTime, 1.8*ones(size(parentTime)), zeros(size(parentTime))]);
+branchTime = (3:0.1:8)';
+branchY = {1.8*ones(size(branchTime)), 1.8 + 3.6*smoothStep((branchTime-3)/2.5), 1.8 - 3.6*smoothStep((branchTime-3)/2)};
+pathMotions = {egoPath, vanPath};
+for ith_branch = 1:3
+    pathMotions{end+1} = struct('Instance',sprintf('van_branch%d',ith_branch), 'Time',branchTime, ...
+        'Pose',[22+10*branchTime, branchY{ith_branch}, atan2(gradient(branchY{ith_branch}, branchTime), 10*ones(size(branchTime)))]); %#ok<SAGROW>
+end
+pathRows = struct('instance',{'ego','van','van_branch1','van_branch2','van_branch3'}, ...
+    'role',{'ego','confederate','confederate','confederate','confederate'}, 'meshID',{priusID,vanID,vanID,vanID,vanID}, ...
+    'branchOf',{'','','van','van','van'}, 'branchID',{0,0,1,2,3});
+catalog = fcn_AnimateCar3D_buildCatalog(fcn_AnimateCar3D_loadSceneList(pathRows), Motions=pathMotions);
+markerStyles = {{'Marker','o','MarkerSize',8}, {'Marker','s','MarkerSize',12,'Color',[0.8 0 0.8],'MarkerFaceColor',[0.8 0 0.8]}};
+pathCriteria = {fcn_AnimateCar3D_fillDisplayCriteria(PathRoles={'ego'}, MarkerStyles=markerStyles), ...
+    fcn_AnimateCar3D_fillDisplayCriteria(PathRoles={'ego'}, MarkerStyles=markerStyles, PathPreview='thin', ...
+    PathLineType='ribbonAndLine', PathColorPolicy='branch', MarkerOn='both')};
+pathCaptions = {'(a) defaults: trails, object tints; the ego colored by its speed', ...
+    '(b) thin previews, ribbons with a center line, branch palette, markers on both'};
+pathStates = cell(2,2);          % {player, selector} for each side
+for ith_side = 1:2
+    figure(8+ith_side); clf;
+    set(gcf, 'Position', [100+660*(ith_side-1) 100 640 360], 'Color', 'w');
+    fcn_CarMesh3D_plotScene(GroundExtent=[-20 200 -25 25], GridSpacing=10, FigNum=8+ith_side);
+    axis off;
+    set(gca, 'Projection', 'perspective');
+    fcn_INTERNAL_setCaption(gcf, pathCaptions{ith_side});
+end
+gifFile = fullfile(pwd,'Images','pathLines_options.gif');
+gifColorMap = [];
+for ith_step = 1:2:numel(pathTime)
+    sideImages = cell(1,2);
+    cameraPosition = [pathX(ith_step)-18 -12 12];
+    cameraTarget = [pathX(ith_step)+30 0 0];
+    for ith_side = 1:2
+        figure(8+ith_side);
+        campos(cameraPosition); camtarget(cameraTarget); camva(40);
+        [displayList, pathStates{ith_side,2}] = fcn_AnimateCar3D_selectObjects(catalog, pathTime(ith_step), pathCriteria{ith_side}, ...
+            SelectorState=pathStates{ith_side,2}, Camera=gca, MeshSet=meshSet);
+        pathStates{ith_side,1} = fcn_AnimateCar3D_playScene(displayList, meshSet, PlayerState=pathStates{ith_side,1}, FigNum=8+ith_side);
+        campos(cameraPosition); camtarget(cameraTarget); camva(40);
+        drawnow;
+        frame = getframe(gcf);
+        sideImages{ith_side} = frame.cdata;
+    end
+    if flag_saveGifs
+        rows = min(size(sideImages{1},1), size(sideImages{2},1));
+        bothSides = [sideImages{1}(1:rows,:,:), sideImages{2}(1:rows,:,:)];
+        if isempty(gifColorMap)
+            [frameIndexed, gifColorMap] = rgb2ind(bothSides, 255, 'nodither');
+            imwrite(frameIndexed, gifColorMap, gifFile, 'gif', 'LoopCount', Inf, 'DelayTime', 0.15);
+        else
+            imwrite(rgb2ind(bothSides, gifColorMap, 'nodither'), gifColorMap, gifFile, 'gif', 'WriteMode', 'append', 'DelayTime', 0.15);
+        end
+    end
+end
+for ith_side = 1:2
+    fcn_AnimateCar3D_playScene([], meshSet, PlayerState=pathStates{ith_side,1}, Action='clear');
+end
 
 
 

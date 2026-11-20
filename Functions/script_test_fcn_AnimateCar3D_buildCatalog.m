@@ -168,7 +168,8 @@ figure(figNum); close(figNum);
 
 motionTemplate = fcn_AnimateCar3D_buildCatalog();
 assert(isequal(fieldnames(motionTemplate)', {'Instance','Time','Pose','WheelSpin','SteerAngle','WheelLift', ...
-    'BodyRoll','BodyPitch','BodyHeave','LightStates'}));
+    'BodyRoll','BodyPitch','BodyHeave','LightStates','PathColor','PathMarker'}));
+assert(isequal(sort(motionTemplate.PathColor.Columns), [1 3]) && motionTemplate.PathMarker.Columns==1);
 assert(motionTemplate.Instance.Required && motionTemplate.Time.Required && motionTemplate.Pose.Required);
 assert(~motionTemplate.WheelSpin.Required && motionTemplate.WheelSpin.Columns==4);
 assert(isequal(motionTemplate.Pose.Columns, [3 6]) && strcmp(motionTemplate.LightStates.Class,'struct'));
@@ -191,11 +192,12 @@ badMotions = {setfield(carMotion, 'Wheelspin', zeros(numel(carTime),4)), ...    
     setfield(carMotion, 'wheel_spin', zeros(numel(carTime),4)), ...             % misspelled
     setfield(carMotion, 'WheelSpin', zeros(numel(carTime),3)), ...              % 3 columns, not 4
     setfield(carMotion, 'BodyRoll', zeros(numel(carTime)-1,1)), ...             % one row short
-    rmfield(carMotion, 'Pose')};                                                % no Pose
+    rmfield(carMotion, 'Pose'), ...                                             % no Pose
+    setfield(carMotion, 'PathMarker', -ones(numel(carTime),1))};                % not a style index
 expectedIDs = {'AnimateCar3D:motionField','AnimateCar3D:motionField','AnimateCar3D:motionSize', ...
-    'AnimateCar3D:motionSize','AnimateCar3D:motionField'};
+    'AnimateCar3D:motionSize','AnimateCar3D:motionField','AnimateCar3D:motionSize'};
 expectedTexts = {'did you mean WheelSpin','did you mean WheelSpin', sprintf('expected %d x 4', numel(carTime)), ...
-    sprintf('expected %d x 1', numel(carTime)), 'no Pose'};
+    sprintf('expected %d x 1', numel(carTime)), 'no Pose', 'MarkerStyles index'};
 for ith_bad = 1:numel(badMotions)
     errorID = '';
     try

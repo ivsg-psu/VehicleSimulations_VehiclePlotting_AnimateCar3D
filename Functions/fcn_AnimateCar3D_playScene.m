@@ -41,6 +41,16 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %            level and far objects a box. Level 0 is the full mesh
 %            (middle only). A middle object whose level changes gets the
 %            graphics of its new level (reused if free).
+%   Paths    displayList.Paths (from the selector, or added by a script)
+%            are drawn on the ground as displayList.PathStyle says:
+%            LineType 'line' (screen lines, LineWidth points), 'ribbon'
+%            (strips RibbonWidth meters wide), or 'ribbonAndLine' (a
+%            ribbon with a 1 pt line down its middle); previews half as
+%            wide if Preview is 'thin'. A path has one color, or a color
+%            at each point. Markers use PathStyle.MarkerStyles (a style
+%            with no 'Color' takes its path's color there). The graphics
+%            of each path (by instance and kind) are kept from step to
+%            step and hidden when it is no longer listed.
 %   Style    Color tints the body and trim, by part (not glass, wheels,
 %            or lamps, whatever their opacity); Alpha makes the whole
 %            vehicle see-through (middle and near; merged objects are
@@ -95,11 +105,13 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %           BoxPatch: the patch of far boxes and simple shapes
 %           MergedPatch: the patch of far vehicles drawn with a detail
 %               level's mesh
+%           PathLines: the path graphics (a map from 'instance|kind' to
+%               its line, ribbon, and markers)
 %           MergedCache: each merged mesh, ready to place (by mesh and
 %               level)
 %           ScratchAxes: the hidden axes new vehicles are drawn in
 %           Stats: counts for the last step: NumNear, NumMiddle, NumFar,
-%               NumMergedFaces, NumCreated, NumReused, NumHidden,
+%               NumMergedFaces, NumPaths, NumCreated, NumReused, NumHidden,
 %               NumDeleted, NumPooled, and UpdateSeconds (time spent in
 %               this function, not counting drawnow)
 %
@@ -129,6 +141,10 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %   %   % one patch (MergedPatch), with boxes and simple shapes in another;
 %   %   % Color tints by part (not glass, wheels, or lamps), face by face;
 %   %   % NumMergedFaces in Stats
+%   % * Path lines (displayList.Paths, displayList.PathStyle): screen lines,
+%   %   % ground ribbons, or both; one color or a color at each point;
+%   %   % markers from MarkerStyles; kept from step to step and hidden;
+%   %   % NumPaths in Stats
 
 % TO-DO:
 %
@@ -279,6 +295,13 @@ if strcmp(options.Action,'clear')
         if isfield(playerState,'MergedPatch') && isgraphics(playerState.MergedPatch)
             delete(playerState.MergedPatch);
         end
+        if isfield(playerState,'PathLines')
+            pathGraphics = values(playerState.PathLines);
+            for ith_path = 1:numel(pathGraphics)
+                fcn_INTERNAL_deletePathGraphics(pathGraphics{ith_path});
+            end
+            playerState.PathLines = containers.Map('KeyType','char','ValueType','any');
+        end
         if isgraphics(playerState.ScratchAxes)
             delete(ancestor(playerState.ScratchAxes,'figure'));
         end
@@ -308,6 +331,7 @@ if isempty(playerState)
     playerState.BoxPatch = gobjects(1);
     playerState.MergedPatch = gobjects(1);
     playerState.MergedCache = containers.Map('KeyType','char','ValueType','any');
+    playerState.PathLines = containers.Map('KeyType','char','ValueType','any');
     playerState.ScratchAxes = gobjects(1);
     playerState.Stats = struct;
 end
@@ -332,7 +356,7 @@ end
 playerState.Step = playerState.Step + 1;
 thisStep = playerState.Step;
 pool = playerState.Pool;
-stats = struct('NumNear',0, 'NumMiddle',0, 'NumFar',0, 'NumMergedFaces',0, 'NumCreated',0, 'NumReused',0, ...
+stats = struct('NumNear',0, 'NumMiddle',0, 'NumFar',0, 'NumMergedFaces',0, 'NumPaths',0, 'NumCreated',0, 'NumReused',0, ...
     'NumHidden',0, 'NumDeleted',0, 'NumPooled',0, 'UpdateSeconds',0);
 
 % Index the pool: which entry each visible instance has, and which
@@ -436,6 +460,22 @@ end
 [playerState.BoxPatch, playerState.MergedPatch, playerState.MergedCache, stats.NumMergedFaces] = fcn_INTERNAL_updateFar( ...
     playerState.BoxPatch, playerState.MergedPatch, playerState.MergedCache, displayList.Boxes, meshSet, playerState.Axes, options.TintStrength);
 stats.NumFar = numel(displayList.Boxes.Instance);
+
+%%%% Path lines
+if ~isfield(playerState,'PathLines')
+    playerState.PathLines = containers.Map('KeyType','char','ValueType','any');
+end
+paths = struct('Instance',{}, 'Kind',{}, 'XYZ',{}, 'Color',{});
+if isfield(displayList,'Paths')
+    paths = displayList.Paths;
+end
+pathStyle = struct('LineType','line', 'LineWidth',2, 'RibbonWidth',0.6, 'Preview','thin', ...
+    'MarkerStyles',{{{'Marker','o','MarkerSize',6}}});
+if isfield(displayList,'PathStyle') && ~isempty(displayList.PathStyle)
+    pathStyle = displayList.PathStyle;
+end
+playerState.PathLines = fcn_INTERNAL_updatePaths(playerState.PathLines, paths, pathStyle, playerState.Axes);
+stats.NumPaths = numel(paths);
 
 % Done
 playerState.Pool = pool;
@@ -659,6 +699,133 @@ cr = cos(pose(4)); sr = sin(pose(4));
 rotation = [cy -sy 0; sy cy 0; 0 0 1] * [cp 0 sp; 0 1 0; -sp 0 cp] * [1 0 0; 0 cr -sr; 0 sr cr];
 poseMatrix = [rotation, pose(1:3)'; 0 0 0 1];
 end % Ends fcn_INTERNAL_poseToMatrix
+
+%% fcn_INTERNAL_updatePaths
+function pathGraphicsMap = fcn_INTERNAL_updatePaths(pathGraphicsMap, paths, pathStyle, axesHandle)
+% Draw each path (by instance and kind): its line and/or ribbon, made
+% once and then moved; its markers, remade each step. Paths not listed
+% this step are hidden.
+listedKeys = cell(numel(paths),1);
+flagLine = any(strcmp(pathStyle.LineType, {'line','ribbonAndLine'}));
+flagRibbon = any(strcmp(pathStyle.LineType, {'ribbon','ribbonAndLine'}));
+for ith_path = 1:numel(paths)
+    thisPath = paths(ith_path);
+    pathKey = [thisPath.Instance '|' thisPath.Kind];
+    listedKeys{ith_path} = pathKey;
+    if isKey(pathGraphicsMap, pathKey)
+        graphics = pathGraphicsMap(pathKey);
+    else
+        graphics = struct('Line',gobjects(1), 'Ribbon',gobjects(1), 'Markers',gobjects(0));
+    end
+    widthScale = 1;
+    if strcmp(thisPath.Kind,'preview') && strcmp(pathStyle.Preview,'thin')
+        widthScale = 0.5;
+    end
+    Npoints = size(thisPath.XYZ,1);
+    pointColors = thisPath.Color;
+    if size(pointColors,1)==1
+        pointColors = repmat(pointColors, Npoints, 1);
+    end
+
+    % The line: an open patch (a NaN vertex ends it), so that it can have
+    % a color at each point
+    if flagLine && Npoints>=2
+        if strcmp(pathStyle.LineType,'ribbonAndLine')
+            lineWidth = 1*widthScale;
+        else
+            lineWidth = pathStyle.LineWidth*widthScale;
+        end
+        lineVertices = [thisPath.XYZ + [0 0 0.035]; NaN NaN NaN];
+        lineArguments = {'Vertices',lineVertices, 'Faces',1:Npoints+1, 'FaceVertexCData',[pointColors; NaN NaN NaN], ...
+            'LineWidth',lineWidth, 'Visible','on'};
+        if ~isgraphics(graphics.Line)
+            graphics.Line = patch(axesHandle, lineArguments{:}, 'FaceColor','none', 'EdgeColor','interp', ...
+                'PickableParts','none', 'Tag','AnimateCar3D path line', 'DisplayName',pathKey);
+        else
+            set(graphics.Line, 'Faces', []);
+            set(graphics.Line, lineArguments{:});
+        end
+    elseif isgraphics(graphics.Line)
+        set(graphics.Line, 'Visible','off');
+    end
+
+    % The ribbon: a strip on the ground, RibbonWidth wide
+    if flagRibbon && Npoints>=2
+        halfWidth = pathStyle.RibbonWidth*widthScale/2;
+        directions = gradient(thisPath.XYZ(:,1:2)')';
+        directions = directions./max(vecnorm(directions,2,2), eps);
+        normals = [-directions(:,2), directions(:,1)];
+        ribbonVertices = [thisPath.XYZ(:,1:2) + halfWidth*normals, thisPath.XYZ(:,3) + 0.03; ...
+                          thisPath.XYZ(:,1:2) - halfWidth*normals, thisPath.XYZ(:,3) + 0.03];
+        ribbonFaces = [(1:Npoints-1)', (2:Npoints)', Npoints+(2:Npoints)', Npoints+(1:Npoints-1)'];
+        ribbonArguments = {'Vertices',ribbonVertices, 'Faces',ribbonFaces, 'FaceVertexCData',[pointColors; pointColors], ...
+            'Visible','on'};
+        if ~isgraphics(graphics.Ribbon)
+            graphics.Ribbon = patch(axesHandle, ribbonArguments{:}, 'FaceColor','interp', 'EdgeColor','none', ...
+                'FaceLighting','none', 'PickableParts','none', 'Tag','AnimateCar3D path ribbon', 'DisplayName',pathKey);
+        else
+            set(graphics.Ribbon, 'Faces', []);
+            set(graphics.Ribbon, ribbonArguments{:});
+        end
+    elseif isgraphics(graphics.Ribbon)
+        set(graphics.Ribbon, 'Visible','off');
+    end
+
+    % The markers: one line object per style (per marker, if the style
+    % takes its color from a path with a color at each point)
+    delete(graphics.Markers(isgraphics(graphics.Markers)));
+    graphics.Markers = gobjects(0);
+    if isfield(thisPath,'MarkerXYZ') && ~isempty(thisPath.MarkerXYZ)
+        for styleIndex = unique(thisPath.MarkerStyle(:))'
+            thisStyle = pathStyle.MarkerStyles{styleIndex};
+            rows = find(thisPath.MarkerStyle(:)==styleIndex);
+            flagOwnColor = any(strcmpi(thisStyle(1:2:end), 'Color'));
+            if flagOwnColor || size(thisPath.Color,1)==1
+                groups = {rows};
+            else
+                groups = num2cell(rows);
+            end
+            for ith_group = 1:numel(groups)
+                groupRows = groups{ith_group};
+                markerColor = fcn_INTERNAL_colorNear(thisPath, thisPath.MarkerXYZ(groupRows(1),:));
+                graphics.Markers(end+1) = line(axesHandle, thisPath.MarkerXYZ(groupRows,1), thisPath.MarkerXYZ(groupRows,2), ...
+                    thisPath.MarkerXYZ(groupRows,3) + 0.05, 'LineStyle','none', 'Marker','o', 'Color',markerColor, ...
+                    'MarkerFaceColor',markerColor, thisStyle{:}, 'PickableParts','none', 'Tag','AnimateCar3D path marker');
+            end
+        end
+    end
+    pathGraphicsMap(pathKey) = graphics;
+end
+
+% Hide the paths not listed
+allKeys = keys(pathGraphicsMap);
+for ith_key = find(~ismember(allKeys, listedKeys))
+    graphics = pathGraphicsMap(allKeys{ith_key});
+    shapeHandles = [graphics.Line, graphics.Ribbon];
+    set(shapeHandles(isgraphics(shapeHandles)), 'Visible','off');
+    delete(graphics.Markers(isgraphics(graphics.Markers)));
+    graphics.Markers = gobjects(0);
+    pathGraphicsMap(allKeys{ith_key}) = graphics;
+end
+end % Ends fcn_INTERNAL_updatePaths
+
+%% fcn_INTERNAL_colorNear
+function color = fcn_INTERNAL_colorNear(thisPath, point)
+% The path's color at the point nearest a marker
+if size(thisPath.Color,1)==1
+    color = thisPath.Color;
+else
+    [~, nearest] = min(sum((thisPath.XYZ - point).^2, 2));
+    color = thisPath.Color(nearest,:);
+end
+end % Ends fcn_INTERNAL_colorNear
+
+%% fcn_INTERNAL_deletePathGraphics
+function fcn_INTERNAL_deletePathGraphics(graphics)
+% Delete one path's graphics
+allHandles = [graphics.Line, graphics.Ribbon, graphics.Markers];
+delete(allHandles(isgraphics(allHandles)));
+end % Ends fcn_INTERNAL_deletePathGraphics
 
 %% fcn_INTERNAL_updateFar
 function [boxPatch, mergedPatch, mergedCache, numMergedFaces] = fcn_INTERNAL_updateFar(boxPatch, mergedPatch, mergedCache, ...

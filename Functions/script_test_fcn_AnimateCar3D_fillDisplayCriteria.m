@@ -55,6 +55,12 @@ assert(strcmp(criteria.Region,'cameraView') && strcmp(criteria.Center,'ego'));
 assert(criteria.TopScreenSize==105 && criteria.MergeBelowSize==37 && criteria.MinScreenSize==1);
 assert(criteria.NearCount==10 && criteria.MiddleCount==40 && isinf(criteria.FarCount));
 assert(criteria.MaxDistance==500 && criteria.NominalScale==618 && abs(criteria.Hysteresis-0.1)<1e-12);
+assert(criteria.BranchPaths && criteria.PathTrail && strcmp(criteria.PathPreview,'none') && isempty(criteria.PathRoles));
+assert(isinf(criteria.TrailSeconds) && isinf(criteria.PreviewSeconds) && strcmp(criteria.PathLineType,'line'));
+assert(criteria.PathLineWidth==2 && criteria.PathRibbonWidth==0.6 && strcmp(criteria.PathColorPolicy,'object'));
+assert(isequal(size(criteria.PathPalette),[6 3]) && ~any(ismember(criteria.PathPalette, [0.9290 0.6940 0.1250], 'rows')));
+assert(size(criteria.PathColormap,1)==256 && isempty(criteria.PathColorLimits) && strcmp(criteria.MarkerOn,'trail'));
+assert(isequal(criteria.MarkerStyles, {{'Marker','o','MarkerSize',6}}));
 assert(~any(isfield(criteria, {'NearDistance','MiddleDistance','FarDistance'})));
 assert(isequal(criteria.FixedTiers, {'ego','near'}));
 assert(~isfield(criteria,'FigNum'));
@@ -124,6 +130,22 @@ assert(isstruct(criteria));
 
 %% Fail conditions
 % Each block below should throw an error. Change 1==0 to 1==1 to run them.
+
+%% TEST case: Path settings, and marker styles that are checked
+criteria = fcn_AnimateCar3D_fillDisplayCriteria(PathPreview='thin', PathLineType='ribbonAndLine', PathColorPolicy='branch', ...
+    MarkerStyles={{'Marker','s','MarkerSize',20,'Color',[1 0 0]}, {'Marker','^'}}, MarkerOn='both', PathRoles='ego');
+assert(strcmp(criteria.PathPreview,'thin') && strcmp(criteria.PathLineType,'ribbonAndLine') && isequal(criteria.PathRoles,{'ego'}));
+assert(numel(criteria.MarkerStyles)==2);
+badStyles = {{{'Marker','o','MarkerSise',6}}, {{'Marker'}}, {}};
+for ith_bad = 1:numel(badStyles)
+    flagThrown = false;
+    try
+        fcn_AnimateCar3D_fillDisplayCriteria(MarkerStyles=badStyles{ith_bad});
+    catch
+        flagThrown = true;
+    end
+    assert(flagThrown);
+end
 
 %% FAIL case: Tier sizes out of order
 if 1==0

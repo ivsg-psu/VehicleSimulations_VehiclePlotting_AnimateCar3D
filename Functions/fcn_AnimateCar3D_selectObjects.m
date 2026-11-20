@@ -41,6 +41,18 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %   8. Style: an object's own color and alpha, or its role's default
 %      (confederates tinted ConfederateColor; branches take their
 %      parent's color and BranchAlpha).
+%   9. Path lines (displayList.Paths): when any member of a family (a
+%      parent and its branches) is drawn, every member's path is listed
+%      (BranchPaths); so is the path of each drawn object whose role is
+%      in PathRoles. Each has a trail (where it has been, up to
+%      TrailSeconds back) and, with PathPreview, a preview (where it will
+%      go, up to PreviewSeconds ahead; a live object's future is not
+%      known). At a split, each branch's line starts at the split point
+%      and its parent's runs up to it. Colors: the motion's own PathColor
+%      (RGB, or values through PathColormap) if it has one, else by
+%      PathColorPolicy. Markers: the motion's PathMarker instants, each
+%      with its MarkerStyles index, on the trail, preview, or both
+%      (MarkerOn).
 %
 % FORMAT:
 %
@@ -88,12 +100,19 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %
 %      displayList: for fcn_AnimateCar3D_playScene.
 %
+%      (displayList.Paths: the path lines, a structure array with fields
+%      Instance, Kind ('trail' or 'preview'), XYZ (points, N x 3), Color
+%      (1 x 3, or N x 3: a color at each point), MarkerXYZ (M x 3), and
+%      MarkerStyle (M x 1, indices into MarkerStyles); and
+%      displayList.PathStyle, how to draw them: LineType, LineWidth,
+%      RibbonWidth, Preview, MarkerStyles. See step 9 above.)
+%
 %      selectorState: pass back on the next call. Fields: Tiers (a map
 %      from instance to its tier, 1 near, 2 middle, 3 far), Levels (a map
 %      from instance to its detail level), LoadedMotions, StaticCache,
 %      SizeCache, Entered and Left (instances that started or stopped
 %      being drawn this step), and Stats (NumCandidates, NumNear,
-%      NumMiddle, NumFar, NumTooSmall, RegionUsed, SelectSeconds).
+%      NumMiddle, NumFar, NumTooSmall, NumPaths, RegionUsed, SelectSeconds).
 %
 % DEPENDENCIES:
 %
@@ -127,6 +146,8 @@ function [displayList, selectorState] = fcn_AnimateCar3D_selectObjects(catalog, 
 %   %   % display list; NumTooSmall in Stats
 %   % * Far vehicles over MergeBelowSize (past the middle count) are capped
 %   %   % at the level made for MergeBelowSize
+%   % * Path lines (displayList.Paths): trails and previews of each drawn
+%   %   % family of branches, and of roles in PathRoles
 
 % TO-DO:
 %
@@ -526,6 +547,13 @@ displayList = fcn_AnimateCar3D_fillDisplayList(Time=sceneTime, Instance=objectNa
     BodyHeave=bodyMotion(:,3), LightStates=lightInput, Color=colors, Alpha=alphas, Size=sizes, ...
     Level=level(drawn)', ScreenSize=screenSizes(drawn)', FigNum=-1);
 
+%%%% 9. Path lines
+if ~isfield(selectorState,'PathValueLimits')
+    selectorState.PathValueLimits = [];
+end
+[displayList.Paths, displayList.PathStyle, selectorState.PathValueLimits] = fcn_INTERNAL_paths(catalog, objects, ...
+    objectNames, drawnIndices, sceneTime, criteria, selectorState.PathValueLimits);
+
 % Remember this step's tiers; who entered and who left
 newTiers = containers.Map('KeyType','char','ValueType','double');
 newLevels = containers.Map('KeyType','char','ValueType','double');
@@ -540,7 +568,8 @@ selectorState.Entered = setdiff(newTiers.keys, previousTiers.keys);
 selectorState.Left = setdiff(previousTiers.keys, newTiers.keys);
 selectorState.Tiers = newTiers;
 selectorState.Stats = struct('NumCandidates',Ncandidates, 'NumNear',sum(tier==1), 'NumMiddle',sum(tier==2), ...
-    'NumFar',sum(tier==3), 'NumTooSmall',numTooSmall, 'RegionUsed',regionUsed, 'SelectSeconds',toc(selectTimer));
+    'NumFar',sum(tier==3), 'NumTooSmall',numTooSmall, 'NumPaths',numel(displayList.Paths), ...
+    'RegionUsed',regionUsed, 'SelectSeconds',toc(selectTimer));
 
 %% Plot the results (for debugging)?
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -824,6 +853,193 @@ for ith_drawn = 1:N
     alphas(ith_drawn) = alpha;
 end
 end % Ends fcn_INTERNAL_styles
+
+%% fcn_INTERNAL_paths
+function [paths, pathStyle, valueLimits] = fcn_INTERNAL_paths(catalog, objects, objectNames, drawnIndices, sceneTime, criteria, valueLimits)
+% The path lines to draw: each family (a parent and its branches) with a
+% member drawn, and the drawn objects whose role is in PathRoles; for
+% each, its trail (up to now) and its preview (the rest), with a color
+% at each point and its markers
+settings = fcn_AnimateCar3D_fillDisplayCriteria(FigNum=-1);         % defaults, for criteria made before path lines
+for settingName = {'BranchPaths','PathRoles','PathTrail','PathPreview','TrailSeconds','PreviewSeconds','PathLineType', ...
+        'PathLineWidth','PathRibbonWidth','PathColorPolicy','PathColor','PathPalette','PathColormap','PathColorLimits', ...
+        'MarkerStyles','MarkerOn','ConfederateColor'}
+    if isfield(criteria, settingName{1})
+        settings.(settingName{1}) = criteria.(settingName{1});
+    end
+end
+pathStyle = struct('LineType',settings.PathLineType, 'LineWidth',settings.PathLineWidth, ...
+    'RibbonWidth',settings.PathRibbonWidth, 'Preview',settings.PathPreview, 'MarkerStyles',{settings.MarkerStyles});
+paths = struct('Instance',{}, 'Kind',{}, 'XYZ',{}, 'Color',{}, 'MarkerXYZ',{}, 'MarkerStyle',{});
+flagTrail = settings.PathTrail;
+flagPreview = ~strcmp(settings.PathPreview,'none');
+if ~(flagTrail || flagPreview)
+    return;
+end
+
+% Which objects: families with a member drawn, and roles in PathRoles
+Nobjects = numel(objects);
+flagFamily = [objects.HasBranches] | ~cellfun(@isempty, {objects.BranchOf});
+roots = 1:Nobjects;
+for ith_object = find(flagFamily)
+    thisIndex = ith_object;
+    for ith_level = 1:20
+        parentIndex = find(strcmp(objectNames, objects(thisIndex).BranchOf), 1);
+        if isempty(parentIndex)
+            break;
+        end
+        thisIndex = parentIndex;
+    end
+    roots(ith_object) = thisIndex;
+end
+flagChosen = false(1,Nobjects);
+if settings.BranchPaths && any(flagFamily(drawnIndices))
+    drawnRoots = unique(roots(drawnIndices(flagFamily(drawnIndices))));
+    flagChosen = flagFamily & ismember(roots, drawnRoots);
+end
+if ~isempty(settings.PathRoles)
+    flagRole = ismember({objects(drawnIndices).Role}, cellstr(settings.PathRoles));
+    flagChosen(drawnIndices(flagRole)) = true;
+end
+flagChosen = flagChosen & ~[objects.IsStatic];
+if ~any(flagChosen)
+    return;
+end
+
+% The value range for values colored through the colormap: given, or
+% all values in the catalog's motions (once, unless motions are added)
+if isempty(settings.PathColorLimits) && (isempty(valueLimits) || valueLimits(3)~=numel(catalog.Motions))
+    allValues = zeros(0,1);
+    for ith_motion = 1:numel(catalog.Motions)
+        if size(catalog.Motions(ith_motion).PathColor,2)==1
+            allValues = [allValues; catalog.Motions(ith_motion).PathColor(:)]; %#ok<AGROW>
+        end
+    end
+    allValues = allValues(isfinite(allValues));
+    if isempty(allValues)
+        valueLimits = [0 1 numel(catalog.Motions)];
+    else
+        valueLimits = [min(allValues), max(max(allValues), min(allValues) + eps), numel(catalog.Motions)];
+    end
+end
+if ~isempty(settings.PathColorLimits)
+    colorLimits = settings.PathColorLimits(:)';
+else
+    colorLimits = valueLimits(1:2);
+end
+
+for ith_object = find(flagChosen)
+    thisObject = objects(ith_object);
+    % Its path in scene time: the full motion if in memory (with the
+    % user's colors and markers), else the thinned path
+    userColor = [];
+    userMarker = [];
+    if thisObject.MotionIndex > 0
+        motion = catalog.Motions(thisObject.MotionIndex);
+        pathTime = motion.Time(:) + thisObject.TimeOffset;
+        pathXYZ = motion.Pose(:,1:3);
+        userColor = motion.PathColor;
+        userMarker = motion.PathMarker;
+    else
+        pathTime = thisObject.ThinTime(:);
+        pathXYZ = thisObject.ThinPose(:,1:3);
+    end
+    if numel(pathTime) < 2
+        continue;
+    end
+    baseColor = fcn_INTERNAL_pathColor(thisObject, objects(roots(ith_object)), objects, objectNames, settings);
+
+    % The trail, from max(start, now - TrailSeconds) to min(now, end); the
+    % preview, from max(now, start) to min(end, now + PreviewSeconds)
+    windows = zeros(0,2);
+    kinds = {};
+    if flagTrail && pathTime(1) <= sceneTime
+        windows(end+1,:) = [max(pathTime(1), sceneTime - settings.TrailSeconds), min(sceneTime, pathTime(end))]; %#ok<AGROW>
+        kinds{end+1} = 'trail'; %#ok<AGROW>
+    end
+    if flagPreview && pathTime(end) > sceneTime
+        windows(end+1,:) = [max(sceneTime, pathTime(1)), min(pathTime(end), sceneTime + settings.PreviewSeconds)]; %#ok<AGROW>
+        kinds{end+1} = 'preview'; %#ok<AGROW>
+    end
+    for ith_window = 1:numel(kinds)
+        windowStart = windows(ith_window,1);
+        windowEnd = windows(ith_window,2);
+        if windowEnd <= windowStart
+            continue;
+        end
+        rows = pathTime > windowStart & pathTime < windowEnd;
+        pointTimes = [windowStart; pathTime(rows); windowEnd];
+        pointXYZ = interp1(pathTime, pathXYZ, pointTimes);
+        % Colors: the user's (RGB, or values through the colormap), else
+        % one color
+        color = baseColor;
+        if ~isempty(userColor)
+            pointColor = interp1(pathTime, double(userColor), pointTimes);
+            if size(userColor,2)==1
+                pointColor = fcn_INTERNAL_mapValues(pointColor, settings.PathColormap, colorLimits);
+            end
+            flagMissing = any(~isfinite(pointColor),2);
+            pointColor(flagMissing,:) = repmat(baseColor, sum(flagMissing), 1);
+            color = min(max(pointColor,0),1);
+        end
+        % Markers: the motion's instants in this window, if markers go here
+        markerXYZ = zeros(0,3);
+        markerStyle = zeros(0,1);
+        if ~isempty(userMarker) && (strcmp(settings.MarkerOn,'both') || strcmp(settings.MarkerOn, kinds{ith_window}))
+            markerRows = userMarker(:) > 0 & pathTime >= windowStart - 1e-9 & pathTime <= windowEnd + 1e-9;
+            if strcmp(kinds{ith_window},'preview') && strcmp(settings.MarkerOn,'both')
+                markerRows = markerRows & pathTime > windowStart + 1e-9;      % (the instant now is on the trail)
+            end
+            markerXYZ = pathXYZ(markerRows,:);
+            markerStyle = userMarker(markerRows);
+            if any(markerStyle > numel(settings.MarkerStyles))
+                error('AnimateCar3D:pathMarker', 'The motion of %s has PathMarker %d, but MarkerStyles has only %d styles', ...
+                    thisObject.Instance, max(markerStyle), numel(settings.MarkerStyles));
+            end
+        end
+        paths(end+1) = struct('Instance',thisObject.Instance, 'Kind',kinds{ith_window}, 'XYZ',pointXYZ, 'Color',color, ...
+            'MarkerXYZ',markerXYZ, 'MarkerStyle',markerStyle(:)); %#ok<AGROW>
+    end
+end
+paths = paths(:);
+end % Ends fcn_INTERNAL_paths
+
+%% fcn_INTERNAL_pathColor
+function color = fcn_INTERNAL_pathColor(thisObject, rootObject, objects, objectNames, settings)
+% One color for a path, by PathColorPolicy
+switch settings.PathColorPolicy
+    case 'fixed'
+        color = settings.PathColor;
+        return;
+    case 'branch'
+        if thisObject.BranchID > 0
+            palette = settings.PathPalette;
+            color = palette(mod(thisObject.BranchID-1, size(palette,1)) + 1, :);
+            return;
+        end
+    case 'family'
+        thisObject = rootObject;
+end
+color = thisObject.Color;
+if any(isnan(color))
+    color = fcn_INTERNAL_roleColor(thisObject, objects, objectNames, settings);
+end
+if any(isnan(color))
+    color = settings.PathColor;
+end
+color = color(:)';
+end % Ends fcn_INTERNAL_pathColor
+
+%% fcn_INTERNAL_mapValues
+function colors = fcn_INTERNAL_mapValues(values, colormapColors, colorLimits)
+% Values to colors through a colormap and its limits (NaN stays NaN)
+Ncolors = size(colormapColors,1);
+fraction = (values(:) - colorLimits(1))/(colorLimits(2) - colorLimits(1));
+index = round(1 + min(max(fraction,0),1)*(Ncolors-1));
+colors = nan(numel(values),3);
+flagGood = isfinite(values(:));
+colors(flagGood,:) = colormapColors(index(flagGood),:);
+end % Ends fcn_INTERNAL_mapValues
 
 %% fcn_INTERNAL_roleColor
 function color = fcn_INTERNAL_roleColor(thisObject, objects, objectNames, criteria)

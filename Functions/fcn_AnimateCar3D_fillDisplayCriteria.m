@@ -60,7 +60,13 @@ function criteria = fcn_AnimateCar3D_fillDisplayCriteria(options)
 %           (Hysteresis=fraction), (RolesShown=roles), (AlwaysShown=roles),...
 %           (AlwaysShowBranches=flag), (FixedTiers=pairs),...
 %           (HideParentAtSplit=flag), (BranchAlpha=alpha),...
-%           (ConfederateColor=rgb), (FigNum=figNum))
+%           (ConfederateColor=rgb), (BranchPaths=flag), (PathRoles=roles),...
+%           (PathTrail=flag), (PathPreview=kind), (TrailSeconds=s),...
+%           (PreviewSeconds=s), (PathLineType=type), (PathLineWidth=pt),...
+%           (PathRibbonWidth=m), (PathColorPolicy=policy), (PathColor=rgb),...
+%           (PathPalette=colors), (PathColormap=colors),...
+%           (PathColorLimits=[low high]), (MarkerStyles=styles),...
+%           (MarkerOn=where), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -108,6 +114,51 @@ function criteria = fcn_AnimateCar3D_fillDisplayCriteria(options)
 %      ConfederateColor: the tint of confederates with no color of their
 %      own [0.85 0.15 0.10]
 %
+%      PATH LINES on the ground (displayList.Paths, drawn by the player).
+%      A trail is where an object has been; a preview is where it will go
+%      (live objects have no known future, so no preview). At a split,
+%      each branch's line starts at the split point and its parent's line
+%      runs up to it (always).
+%      BranchPaths: when any member of a family (a parent and its
+%      branches) is drawn, draw every member's path [true]
+%      PathRoles: other roles whose paths are drawn while they are drawn,
+%      for example {'ego','pedestrian'} [{}]
+%      PathTrail: draw trails [true]
+%      PathPreview: draw previews: 'none', 'thin' (half the width), or
+%      'same' (as the trail) ['none']
+%      TrailSeconds, PreviewSeconds: how far back a trail and how far
+%      ahead a preview reach, seconds [Inf, Inf: all]
+%      PathLineType: 'line' (screen lines: the same width in points at
+%      any distance), 'ribbon' (strips on the ground, PathRibbonWidth
+%      meters wide, shrinking with distance), or 'ribbonAndLine' (a
+%      ribbon with a 1 pt line down its middle, so it never breaks up far
+%      away) ['line']
+%      PathLineWidth: points [2]; PathRibbonWidth: meters [0.6]
+%      PathColorPolicy: the color of paths without colors of their own
+%      (a motion's PathColor, which always comes first): 'object' (the
+%      object's tint), 'branch' (PathPalette by branch number, so branch
+%      2 of the ego and branch 2 of another vehicle match; parents as
+%      'object'), 'family' (each family the color of its root object),
+%      or 'fixed' (PathColor for all) ['object']
+%      PathColor: the color for 'fixed', and for objects drawn in their
+%      mesh's own colors (no tint) [0.3 0.3 0.3]
+%      PathPalette: M x 3 colors for 'branch' [MATLAB's lines colors
+%      without the yellow]. Defaults avoid white and yellow, which look
+%      like lane markings.
+%      PathColormap: M x 3 colors for values (a motion's PathColor given
+%      as K x 1), low to high [256 colors from blue through purple to
+%      red; no yellow or white, which look like lane markings]
+%      PathColorLimits: [low high] values at the ends of the colormap, or
+%      [] for the range of all values in the catalog's motions (fixed for
+%      the whole scene, so colors do not shift as it plays) [[]]
+%      MarkerStyles: a cell array of marker styles, each a cell array of
+%      line property Name, Value pairs (for example {'Marker','s',
+%      'MarkerSize',20, 'Color',[1 0 0]}); a motion's PathMarker values
+%      index into it. A style with no 'Color' takes its path's color.
+%      [{{'Marker','o','MarkerSize',6}}]
+%      MarkerOn: where markers are drawn: 'trail', 'preview', or 'both'
+%      ['trail']
+%
 %      FigNum: a figure number to plot the tiers: size on screen against
 %      distance, for a car (D = 5 m) seen without a camera. Empty
 %      (default) for no figure; -1 for fast mode (no input checks).
@@ -142,6 +193,10 @@ function criteria = fcn_AnimateCar3D_fillDisplayCriteria(options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillDisplayCriteria
+%   % * Path lines: BranchPaths, PathRoles, PathTrail, PathPreview,
+%   %   % TrailSeconds, PreviewSeconds, PathLineType, PathLineWidth,
+%   %   % PathRibbonWidth, PathColorPolicy, PathColor, PathPalette,
+%   %   % PathColormap, PathColorLimits, MarkerStyles, MarkerOn
 %   % * Tiers set by size on screen in pixels (TopScreenSize,
 %   %   % MergeBelowSize, MinScreenSize, NominalScale), in place of distances
 %   %   % (NearDistance, MiddleDistance, FarDistance); MaxDistance bounds the
@@ -184,6 +239,22 @@ arguments
     options.HideParentAtSplit = true
     options.BranchAlpha = 0.35
     options.ConfederateColor = [0.85 0.15 0.10]
+    options.BranchPaths = true          % path lines for drawn families of branches
+    options.PathRoles = {}              % other roles with path lines
+    options.PathTrail = true            % draw trails
+    options.PathPreview = 'none'        % 'none', 'thin', or 'same'
+    options.TrailSeconds = Inf          % seconds of trail
+    options.PreviewSeconds = Inf        % seconds of preview
+    options.PathLineType = 'line'       % 'line', 'ribbon', or 'ribbonAndLine'
+    options.PathLineWidth = 2           % points
+    options.PathRibbonWidth = 0.6       % meters
+    options.PathColorPolicy = 'object'  % 'object', 'branch', 'family', or 'fixed'
+    options.PathColor = [0.3 0.3 0.3]   % for 'fixed', and objects with no tint
+    options.PathPalette = []            % M x 3; [] for lines colors without the yellow
+    options.PathColormap = []           % M x 3; [] for blue-purple-red (256)
+    options.PathColorLimits = []        % [low high]; [] for the range of all values
+    options.MarkerStyles = {{'Marker','o','MarkerSize',6}}   % indexed by a motion's PathMarker
+    options.MarkerOn = 'trail'          % 'trail', 'preview', or 'both'
     options.FigNum = []                 % figure to sketch the criteria; -1 for fast mode
 end
 
@@ -296,6 +367,51 @@ if 0==flag_max_speed
         if ~isnumeric(options.ConfederateColor) || numel(options.ConfederateColor)~=3
             error('ConfederateColor must be [r g b]');
         end
+
+        % Check the path inputs
+        for flagName = {'BranchPaths','PathTrail'}
+            thisValue = options.(flagName{1});
+            if ~(islogical(thisValue) || isnumeric(thisValue)) || ~isscalar(thisValue)
+                error('%s must be true or false', flagName{1});
+            end
+        end
+        if ~(iscellstr(options.PathRoles) || ischar(options.PathRoles) || isstring(options.PathRoles))
+            error('PathRoles must be a cell array of role names');
+        end
+        choiceInputs = {'PathPreview', {'none','thin','same'}; 'PathLineType', {'line','ribbon','ribbonAndLine'}; ...
+            'PathColorPolicy', {'object','branch','family','fixed'}; 'MarkerOn', {'trail','preview','both'}};
+        for ith_choice = 1:size(choiceInputs,1)
+            thisValue = options.(choiceInputs{ith_choice,1});
+            if ~(ischar(thisValue) || isstring(thisValue)) || ~any(strcmpi(thisValue, choiceInputs{ith_choice,2}))
+                error('%s must be one of: %s', choiceInputs{ith_choice,1}, strjoin(choiceInputs{ith_choice,2}, ', '));
+            end
+        end
+        for secondsName = {'TrailSeconds','PreviewSeconds'}
+            thisValue = options.(secondsName{1});
+            if ~isnumeric(thisValue) || ~isscalar(thisValue) || thisValue<0
+                error('%s must be a non-negative number (Inf for all)', secondsName{1});
+            end
+        end
+        for widthName = {'PathLineWidth','PathRibbonWidth'}
+            thisValue = options.(widthName{1});
+            if ~isnumeric(thisValue) || ~isscalar(thisValue) || thisValue<=0
+                error('%s must be a positive number', widthName{1});
+            end
+        end
+        if ~isnumeric(options.PathColor) || numel(options.PathColor)~=3
+            error('PathColor must be [r g b]');
+        end
+        for colorsName = {'PathPalette','PathColormap'}
+            thisValue = options.(colorsName{1});
+            if ~isempty(thisValue) && ~(isnumeric(thisValue) && size(thisValue,2)==3 && all(thisValue(:)>=0 & thisValue(:)<=1))
+                error('%s must be an M x 3 array of colors from 0 to 1, or []', colorsName{1});
+            end
+        end
+        if ~isempty(options.PathColorLimits) && ~(isnumeric(options.PathColorLimits) && numel(options.PathColorLimits)==2 ...
+                && options.PathColorLimits(2) > options.PathColorLimits(1))
+            error('PathColorLimits must be [low high], with high above low, or []');
+        end
+        fcn_INTERNAL_checkMarkerStyles(options.MarkerStyles);
     end
 end
 
@@ -323,6 +439,20 @@ end
 
 criteria = options;
 criteria = rmfield(criteria, 'FigNum');
+criteria.PathRoles = cellstr(criteria.PathRoles);
+criteria.BranchPaths = logical(criteria.BranchPaths);
+criteria.PathTrail = logical(criteria.PathTrail);
+for choiceName = {'PathPreview','PathLineType','PathColorPolicy','MarkerOn'}
+    criteria.(choiceName{1}) = char(criteria.(choiceName{1}));
+end
+if isempty(criteria.PathPalette)
+    paletteColors = lines(7);
+    criteria.PathPalette = paletteColors([1 2 4 5 6 7],:);      % (without the yellow)
+end
+if isempty(criteria.PathColormap)
+    colorStops = [0.10 0.35 0.85; 0.55 0.20 0.70; 0.85 0.15 0.10];   % blue, purple, red
+    criteria.PathColormap = interp1([0 0.5 1], colorStops, linspace(0,1,256)');
+end
 if isstring(criteria.Center)
     criteria.Center = char(criteria.Center);
 end
@@ -392,4 +522,21 @@ end % Ends main function
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% (none)
+%% fcn_INTERNAL_checkMarkerStyles
+function fcn_INTERNAL_checkMarkerStyles(markerStyles)
+% Each marker style: a cell array of line property Name, Value pairs
+if ~iscell(markerStyles) || isempty(markerStyles)
+    error('MarkerStyles must be a cell array of styles, each a cell array of Name, Value pairs');
+end
+lineProperties = lower(properties('matlab.graphics.primitive.Line'));
+for ith_style = 1:numel(markerStyles)
+    thisStyle = markerStyles{ith_style};
+    if ~iscell(thisStyle) || mod(numel(thisStyle),2)~=0 || ~all(cellfun(@(n) ischar(n) || isstring(n), thisStyle(1:2:end)))
+        error('MarkerStyles{%d} must be a cell array of Name, Value pairs, for example {''Marker'',''s'',''MarkerSize'',10}', ith_style);
+    end
+    unknownNames = setdiff(lower(cellstr(thisStyle(1:2:end))), lineProperties);
+    if ~isempty(unknownNames)
+        error('MarkerStyles{%d} has a name that is not a line property: %s', ith_style, strjoin(unknownNames, ', '));
+    end
+end
+end % Ends fcn_INTERNAL_checkMarkerStyles
