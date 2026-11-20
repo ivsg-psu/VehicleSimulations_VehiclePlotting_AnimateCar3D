@@ -388,6 +388,44 @@ The defaults avoid white and yellow lines, which look like lane markings.
 
 **How the choices were made.** Ribbons and screen lines were compared on one scene (screen lines are cleanest at every distance but give no sense of depth; ribbons look like paint near the camera but break up far away; a ribbon with a center line keeps both); all three are options, with screen lines the default. Dashed lines were ruled out.
 
+## Roads and simple scenes (prototype)
+
+Most example scenarios need a road under them. Three prototype functions describe, locate, and draw roads. They are laid out like **ASAM OpenDRIVE**, the standard for road networks, so that a later scene-building repository can read and write OpenDRIVE (`.xodr`) files with little change. Moving things (vehicles, pedestrians) stay in the scenario: the scene list and motions, which play the part of **ASAM OpenSCENARIO**.
+
+![Road presets](Images/roadPresets_prototype.png)
+
+*All seen from the same camera: 22 m behind a car (red box) in the first driving lane, 16 m to its right, and 10 m up (at s = 45 m; at the intersections, 35 m out on the west arm, coming in). Below, the two intersections from above.*
+
+![Intersections](Images/intersections_prototype.png)
+
+| Function | What it does |
+|---|---|
+| `fcn_AnimateCar3D_fillRoad` | Fills a road from a preset (`'twoLane'`, `'curvy'`, `'interstate'`, `'urbanStreet'`, `'neighborhood'`) with options (length, lane width, lanes each way, center mark, start pose, random seed, building setback and sides, block length) |
+| `fcn_AnimateCar3D_getRoadPoints` | World points `[x y heading]` from road coordinates: s along the reference line, t across it (left positive), or a lane and an offset, as an OpenSCENARIO `LanePosition`. To place a vehicle, use `DrivingLane` (the k-th driving lane: -1 is the first on the right), which skips medians and shoulders; OpenDRIVE's `LaneID` -1 is the first lane of any type (on the interstate, the median) |
+| `fcn_AnimateCar3D_plotRoad` | Draws the lane surfaces (colored by lane type, with curb steps), the road marks, and the road objects, in three patches (plus one per opacity for see-through objects: `NearSideAlpha`, 0.3, for near-side buildings and trees; `BuildingAlpha` for all buildings). Curves are sampled every 2 m, straight lines every 50 m: the two-lane road is 74 faces, the neighborhood (1200 m, with houses) about 2,400 |
+
+**How a road is described** (OpenDRIVE terms in brackets):
+
+- **Reference line** (`<planView>`): lines, arcs, and spirals (clothoids, whose curvature changes linearly, so that lines and arcs join smoothly). Each starts at its own s, x, y, and heading.
+- **Lanes** (`<laneSection>`): numbered from the reference line outward, negative on the right and positive on the left. Lane 0 is the reference line itself and carries only a mark. Each lane has a type (`driving`, `shoulder`, `border`, `median`, `curb`, `walking`, ...), a width (a cubic in s), and a height (curbs and sidewalks).
+- **Road marks** (`<roadMark>`), on each lane's outer edge: `solid`, `broken`, and double lines, in white (`standard`) or yellow, with a width, and line and space lengths (3 m and 9 m by default, about the US 10 ft and 30 ft).
+- **Objects** (`<object>`): concrete barriers (swept along the road, as `<repeat>`), crosswalks (continental stripes), stop lines, lane arrows, block trees, buildings (boxes), and standing pedestrians (scenery only: moving pedestrians belong in the scenario).
+- **Road networks:** the intersection is four roads and a `<junction>`; `fcn_AnimateCar3D_plotRoad` draws a single road or a network, and `fcn_AnimateCar3D_getRoadPoints` works on each road of a network (`network.Roads(k)`).
+- **Procedural, and repeatable:** the lane layouts are fixed by each preset and its options; buildings, houses, parks, and pedestrians are placed at random from `Seed`, so the same `Seed` always gives the same scene, and another `Seed` a different one.
+
+Colors are flat and simple. Only the road marks and crosswalks are white or yellow, so nothing else looks like a lane line.
+
+### The simple scenes
+
+| Scene | Road | Status |
+|---|---|---|
+| **Two-lane road** | straight, undivided, one 3.6 m lane each way; broken yellow center line (`CenterMark='solid solid'` for no passing); solid white edge lines; 1.8 m shoulders; grass | done: `'twoLane'` |
+| **Curvy road** | the same, curving left (60 m radius) and right (50 m), joined by spirals | done: `'curvy'` |
+| **Interstate** | divided, 4 lanes each way (`LanesEachWay`); broken white lane lines; solid yellow inside and solid white outside edge lines; 1.2 m inside and 3 m outside shoulders; a concrete (Jersey) barrier on the median | done: `'interstate'` |
+| **Urban street** | two lanes, double yellow line; curbs 0.15 m high; 2.5 m sidewalks; a crosswalk; block trees; buildings made at random (repeatably, from `Seed`), occasional pedestrians standing on the sidewalks, set back `BuildingSetback` (6 m) behind the sidewalk, on both sides (`BuildingSides`). The far side is tall (6 to 30 m). The near side (the side of traffic in the right lanes, where a following camera is) is low, mostly one story (3.5 to 4.5 m) with about 1 in 7 two-story (6.5 to 7.5 m), and `fcn_AnimateCar3D_plotRoad` draws its buildings and street trees see-through (`NearSideAlpha`, 0.3), so the camera sees through and over them. Pedestrians are scenario objects, not road objects | street done: `'urbanStreet'`; cross streets wait for intersections |
+| **Neighborhood** | two lanes, no center line, 1200 m (three blocks); curbs, a grass strip with street trees, sidewalks, front lawns; small houses on lots about 20 m wide, with an occasional park (a lawn with block trees); occasional pedestrians standing on the sidewalks; a crosswalk at the end of each block (`BlockLength`, 400 m); houses on the far side by default (`BuildingSides`; near-side houses are low and see-through, as on the urban street), `BuildingSetback` (6 m) behind the sidewalk | done: `'neighborhood'` |
+| **Intersection** | a road network (OpenDRIVE `<junction>`): four arms meeting at a junction; on each arm 2 lanes out and, in two versions, (a) 2 lanes in (a left-turn lane, and a through and right-turn lane), or (b) `RightTurnLane=true`, 3 lanes in (left, through, right); double yellow center lines; curbs and sidewalks joined at the corners; crosswalks, stop lines, and lane arrows; pedestrians on the sidewalks | done: `'intersection'` (cross streets for the urban scene to come) |
+
 ## Folders
 
 | Folder | Contents |
@@ -672,9 +710,13 @@ Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered
 
 ### To-Do
 
-1. **Several very simple example scenarios**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
-2. **A target frame rate for `fcn_AnimateCar3D_playLive`:** an optional input (`TargetFrameRate`, say) to pace the run mode; it now draws as fast as it can.
+1. **Example scenarios, simplest first.** Each is a road (above), a scene list, and motions, small enough to read in a minute; they come first in the demos.
+   - *One vehicle, one maneuver (all defaults):* a lane change at constant speed on the two-lane road; following the curvy road at constant speed; following the curvy road with changing speed.
+   - *Then several objects:* one car passing another; a car following another; a car stopping for a pedestrian at a crosswalk.
+2. **Cross streets for the urban scene**, from the intersection prototype (done in both lane layouts); and connecting roads through junctions (OpenDRIVE `<connection>`), so vehicles can be placed on turning paths.
+3. **A time option for `fcn_AnimateCar3D_playLive`** (optional input): a target frame rate, and how the data's time is tied to the clock: (a) **exactly**, the time in the data matches the clock (for example, both in seconds since the start of the run, or both clock times); or (b) **relative**, one second of clock time moves the animation one second on, from wherever it starts. Today it draws as fast as it can, with the shown time moving at `PlaybackSpeed` with the clock, which is close to (b).
 **Done recently** (2026_11_20)
+- A road prototype laid out like ASAM OpenDRIVE (with an intersection in two lane layouts, and pedestrians standing on sidewalks): `fcn_AnimateCar3D_fillRoad`, `fcn_AnimateCar3D_getRoadPoints`, `fcn_AnimateCar3D_plotRoad`, with presets for the two-lane, curvy, interstate, and urban scenes (see [Roads and simple scenes](#roads-and-simple-scenes-prototype)).
 - Reading only the new rows of grown files in `fcn_AnimateCar3D_watchFolder`, and handling replaced and deleted files (see [Live use](#live-use-step-3)).
 - A live-loop function, `fcn_AnimateCar3D_playLive`: the whole live loop in one call (or one step per call), with a CarMesh3D camera, caption, and GIF frames. See [Live use](#live-use-step-3); demo step 7 now uses it.
 - Path lines (step 6): the selector lists them, the player draws them; trails and previews, color policies, your own colors and markers, screen lines or ribbons. See [Path lines](#path-lines-step-6).
