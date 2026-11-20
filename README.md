@@ -4,7 +4,7 @@ Fast 3D animation of scenes with many vehicles in MATLAB: decision branches, sur
 
 AnimateCar3D builds on [CarMesh3D](https://github.com/ivsg-psu/VehicleSimulations_VehiclePlotting_CarMesh3D), which makes, views, and checks the mesh of one vehicle at a time. AnimateCar3D uses CarMesh3D's vehicle meshes and plotting functions, and adds everything needed for many objects in one scene.
 
-> **Status:** prototype (2026_11_20). Steps 0 to 5 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes; and each object's detail is set by its [size on screen](#detail-levels-set-by-size-on-screen-step-5), from a ladder of reduced meshes made by CarMesh3D (release `CarMesh3D_2026_11_20`). Next: a 2D (top-down) mode.
+> **Status:** prototype (2026_11_20). Steps 0 to 5 of the [Development plan](#development-plan) are done: scenes are read from a scene list and motion files (or from a folder of live data), kept in an object catalog, and drawn through the selector and the scene player; pedestrians and moving items are drawn as simple shapes; and each object's detail is set by its [size on screen](#detail-levels-set-by-size-on-screen-step-5), from a ladder of reduced meshes made by CarMesh3D (release `CarMesh3D_2026_11_20`). Next: see the [TO-DO](#to-do) list.
 
 | One vehicle splitting into ten decision branches | A confederate's three maneuvers, and the ego's three responses |
 |---|---|
@@ -361,7 +361,7 @@ Every object in a scene (the ego vehicle, traffic, pedestrians, gates, buildings
 4. **Pedestrians and moving items** (done), as simple shapes first (see [Pedestrians and moving items](#pedestrians-and-moving-items-step-4)).
 5. **Detail levels set by size on screen** (done): any number of levels, chosen by each object's size in pixels, from a ladder of reduced meshes made by CarMesh3D (see [Detail levels set by size on screen](#detail-levels-set-by-size-on-screen-step-5)).
 
-Later: a 2D (top-down) mode using the same detail levels.
+Out of scope: a 2D (top-down) mode. It needs different inputs (XY outlines, not XYZ meshes), which CarMesh3D does not make yet, so it will be a separate repository; the outlines are listed in CarMesh3D's TO-DO.
 
 ### Step 0 summary: repository setup (done 2026_11_19)
 
@@ -591,23 +591,33 @@ Until step 5, the player's `Color=` tinted every fully opaque face on the vehicl
 
 ## TO-DO
 
-**Next:** the 2D (top-down) mode, using the same detail levels.
+Two lists: **To-Do** (wanted, in rough order), and **Someday** (being considered, but not needed or clearly useful yet). Each function's header also has its own TO-DO list.
 
-**Detail levels** (from step 5)
-- Limiting the levels used by separate objects (every other level, say) was considered: a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Not done; reconsider if separate vehicles switch levels often in a scene (many vehicles crossing 37 to 105 px at once, for example a camera moving fast).
+### To-Do
 
-**Smaller items**
-- A loop function (`fcn_AnimateCar3D_playLive`, say) for the live loop in [Live use](#live-use-step-3): watch, update, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
-- `fcn_AnimateCar3D_watchFolder` reads a grown file whole at each check; for very long runs it could read only the new rows.
-- Pedestrians could swing their legs as they walk (a walking phase from their speed), and simple shapes could include a tree and a traffic signal.
-- A scene list CSV example with per-object motion files kept in the repository (the live demo writes one into a temporary folder).
-- `fcn_AnimateCar3D_buildCatalog` could accept motions with different fields (a cell array), so they need not be given the same fields first.
-- The demos' simple motion maker (`fcn_INTERNAL_integrateMotion`: speed and curvature over time, with brake lights) could become a function, for making test scenes.
+1. **A live-loop function** (`fcn_AnimateCar3D_playLive`, say) for the loop in [Live use](#live-use-step-3): watch the folder, update the catalog, set the camera, select, play, and save frames, so a student need not write the loop. (The demo writes it out, steps 5 to 8.)
+2. **Incremental reading in `fcn_AnimateCar3D_watchFolder`:** it reads a grown file whole at each check; for long runs it should read only the new rows.
+3. **Several very simple example scenes**, kept in the repository, each a scene list and its motion files, small enough to read in a minute and change (for example: one car passing another, a car stopping for a pedestrian at a crosswalk, a lane change, a car following another).
+4. **Motions as a cell array of structures in `fcn_AnimateCar3D_buildCatalog`** (and `fcn_AnimateCar3D_updateCatalog`): today `Motions=` is a structure array, and every element of a structure array must have the same fields, so a motion with wheel and light data (an ego) cannot be joined with one that has only poses (traffic) until the missing fields are added, empty. Instead:
+   - accept a cell array of motion structures, each with only the fields it needs (`Instance`, `Time`, and `Pose` required; the rest optional); keep accepting a structure array;
+   - check each motion against one documented **master motion template**: every field it may have, with its size and units; an unknown field (a misspelled `Wheelspin`, say) is an error, and a field of the wrong size is reported with its motion's name;
+   - copy only the fields each motion has (a loop over its own fields, not all of the template's);
+   - document the template in the function's header, and return it as a helper when the function is called with no inputs (`motionTemplate = fcn_AnimateCar3D_buildCatalog()`).
 
-**Open questions**
+### Someday
+
+- **Simple road assets** to place in scenes: trees, stop signs, curbs, simple buildings, and so on. They may go into their own repository (RoadAssetPlotting, say), once the CarMesh3D work is finished, since they should follow CarMesh3D's structure and workflow (a folder per asset, a standard script, standard checks). For now, AnimateCar3D's simple shapes (boxes, bars, cylinders, pedestrians) stand in.
+- **A scenario-building function:** the demos' simple motion maker (`fcn_INTERNAL_integrateMotion`: speed and curvature over time, with brake lights) could become a function for building scenarios, that is, how each object moves over time.
+- **Limiting the levels used by separately drawn vehicles** (every other level, say), since a level switch costs new graphics. Measured (see [Frame rate](#frame-rate)): about 6 to 11 ms on a few steps a second, 1 to 2 ms per step on average. Reconsider if a scene has many vehicles switching levels at once (for example, a camera moving fast).
+
+### Open questions
+
 - Path lines for branches: drawn by the player, or listed as objects in the display list? (The demo draws them itself for now.)
 
-**Changes wanted in CarMesh3D** (for a later CarMesh3D release; AnimateCar3D works around each one for now; the same list is in CarMesh3D's README, under "Changes wanted by AnimateCar3D")
+### Changes wanted in CarMesh3D
+
+For a later CarMesh3D release. AnimateCar3D works around each one for now; the same list is in CarMesh3D's README, under "Changes wanted by AnimateCar3D".
+
 - `fcn_CarMesh3D_plotVehicle` decides whether an axes is "new" from its visible children only, so it reformats an axes holding only `fcn_CarMesh3D_plotScene`'s hidden-handle objects, and adds lights when the scene's lights are hidden handles. (Work-around: the player draws in a scratch axes.)
 - `fcn_CarMesh3D_saveGifFrame` picks a new 256-color map for each frame, so small colored details (thin lines, tinted vehicles) can turn gray. An option for a fixed color map would help. (Work-around: the main demo writes its GIF with a fixed color map.)
 - The sample car as a vehicle folder in CarMesh3D's `Data`, with its finished mesh and levels file, so that `'sample'` loads like any other vehicle. (Work-around: `fcn_AnimateCar3D_loadMeshes` makes the sample car and its levels once, about 3 s, and keeps them in a cache file in MATLAB's temporary folder, `SampleCacheFile`, remade when the CarMesh3D copy changes.)
