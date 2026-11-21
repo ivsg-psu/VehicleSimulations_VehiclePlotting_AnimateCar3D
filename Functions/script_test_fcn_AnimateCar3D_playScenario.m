@@ -124,6 +124,42 @@ roadResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false
 roadUp = get(roadResult.Axes, 'CameraUpVector');
 assert(abs(norm(roadUp) - 1) < 1e-9 && roadUp(3) > cos(atan(0.06)) - 1e-6);   % (tilted by a grade within the road's 6%)
 
+%% TEST case: A swinging kite camera: fixed, steady, random; with the camera tilting
+figNum = 20005;
+titleString = sprintf('TEST case: A swinging kite camera: fixed, steady, random; with the camera tilting');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+% (the camera's bearing from the object at the last frame, relative to
+% its heading, degrees)
+angleError = @(a, b) mod(a - b + 180, 360) - 180;
+pick = @(values, k) values(k);
+lastPoseOf = @(result, motion) interp1(motion.Time, motion.Pose, result.Times(end));
+bearingNow = @(result, motion) angleError(atan2d(pick(campos(result.Axes), 2) - pick(lastPoseOf(result, motion), 2), ...
+    pick(campos(result.Axes), 1) - pick(lastPoseOf(result, motion), 1)) - rad2deg(pick(lastPoseOf(result, motion), size(motion.Pose, 2))), 0);
+for swingDegrees = [-90 90 0 180]
+    swingResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=10, ShowOptions=false, CameraSwing=swingDegrees, FigNum=figNum);
+    assert(abs(angleError(bearingNow(swingResult, scenario.Motions{1}), swingDegrees)) < 0.5);
+end
+steadyResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=10, ShowOptions=false, CameraSwing=[-10 -170], FigNum=figNum);
+assert(abs(angleError(bearingNow(steadyResult, scenario.Motions{1}), -170)) < 0.5);   % (at the end)
+randomResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=10, ShowOptions=false, CameraSwing='random', SwingSeed=3, FigNum=figNum);
+randomBearing = bearingNow(randomResult, scenario.Motions{1});
+assert(randomBearing >= -170.5 && randomBearing <= -9.5);
+repeatResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=10, ShowOptions=false, CameraSwing='random', SwingSeed=3, FigNum=figNum);
+assert(abs(bearingNow(repeatResult, scenario.Motions{1}) - randomBearing) < 1e-9);         % (the same seed, the same swing)
+handResult = fcn_AnimateCar3D_playScenario(scenario, TimeStep=10, ShowOptions=false, CameraSwing=@(t) -90 + 0*t, FigNum=figNum);
+assert(abs(angleError(bearingNow(handResult, scenario.Motions{1}), -90)) < 0.5);
+% (with tilting: on the hills, the camera looking sideways tilts by the cross slope)
+hills = fcn_AnimateCar3D_fillExampleScenario('curvyHills', FigNum=-1);
+sideResult = fcn_AnimateCar3D_playScenario(hills, TimeStep=20, ShowOptions=false, CameraPitch='vehicle', CameraSwing=-90, FigNum=figNum);
+lastPose = interp1(hills.Motions{1}.Time, hills.Motions{1}.Pose, sideResult.Times(end));
+sideUp = get(sideResult.Axes, 'CameraUpVector');
+lookVector = camtarget(sideResult.Axes) - campos(sideResult.Axes);
+lookTurn = atan2(lookVector(2), lookVector(1)) - lastPose(6);
+viewPitch = lastPose(5)*cos(lookTurn) - lastPose(4)*sin(lookTurn);
+assert(abs(norm(sideUp) - 1) < 1e-9 && abs(sideUp(3) - cos(viewPitch)) < 1e-6 && abs(sin(lookTurn)) > 0.5);   % (tilted by the slope across, looking sideways)
+
 %% TEST case: Night: dark sky, night road and ground, light effects on the vehicle
 figNum = 20004;
 titleString = sprintf('TEST case: Night: dark sky, night road and ground, light effects on the vehicle');

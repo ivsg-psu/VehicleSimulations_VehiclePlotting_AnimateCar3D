@@ -31,6 +31,11 @@ function motion = fcn_AnimateCar3D_fillPathMotion(pathXY, options)
 %      point; or a function of the distance along the path, @(s) ...
 %      Default 10. (Speeds below 0.1 m/s are raised to 0.1.)
 %
+%      Stops: rows of [s seconds]: at distance s along the path, the
+%      object waits that many seconds (stopped, brake lights on), then
+%      goes on. Give a Speed that slows to (near) zero there. Default
+%      zeros(0,2) (no stops).
+%
 %      TimeStep: seconds between motion rows. Default 0.05.
 %
 %      StartTime: the time of the first row, seconds. Default 0.
@@ -99,6 +104,10 @@ function motion = fcn_AnimateCar3D_fillPathMotion(pathXY, options)
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillPathMotion
 %   % * Added the Road option: the vehicle on the road's surface (z, roll, pitch)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillPathMotion
+%   % * Added the Stops option: wait at given distances (brake lights on)
 
 % TO-DO:
 %
@@ -117,6 +126,7 @@ arguments
 
     pathXY
     options.Speed = 10            % m/s: a value, N values, or @(s)
+    options.Stops = zeros(0,2)    % rows of [s seconds]: wait at s
     options.TimeStep = 0.05       % seconds between rows
     options.StartTime = 0         % seconds
     options.Instance = 'ego'      % the object's name
@@ -257,11 +267,26 @@ pathSpeed = max(double(pathSpeed(:)), 0.1);
 
 %%%% Time to reach each path point, then the motion on a time grid
 pathTime = [0; cumsum(diff(pathS) ./ ((pathSpeed(1:end-1) + pathSpeed(2:end))/2))];
-timeValues = (0:options.TimeStep:pathTime(end))';
-if pathTime(end) - timeValues(end) > 1e-9
-    timeValues(end+1,1) = pathTime(end);
+% (stops: at each stop's distance, wait; later points come that much later)
+knotTime = pathTime; knotS = pathS;
+stopWindows = zeros(0,2);
+stops = sortrows(options.Stops, 1);
+for ith_stop = 1:size(stops,1)
+    stopS = min(max(stops(ith_stop,1), knotS(1)), knotS(end));
+    stopTime = interp1(knotS, knotTime, stopS);
+    later = knotS > stopS;
+    knotTime(later) = knotTime(later) + stops(ith_stop,2);
+    knotTime = [knotTime(~later); stopTime; stopTime + stops(ith_stop,2); knotTime(later)];
+    knotS = [knotS(~later); stopS; stopS; knotS(later)];
+    [knotTime, order] = sort(knotTime); knotS = knotS(order);
+    [knotTime, unique1] = unique(knotTime, 'stable'); knotS = knotS(unique1);
+    stopWindows(end+1,:) = [stopTime, stopTime + stops(ith_stop,2)]; %#ok<AGROW>
 end
-distance = interp1(pathTime, pathS, timeValues);
+timeValues = (0:options.TimeStep:knotTime(end))';
+if knotTime(end) - timeValues(end) > 1e-9
+    timeValues(end+1,1) = knotTime(end);
+end
+distance = interp1(knotTime, knotS, timeValues);
 pathHeading = unwrap(atan2(gradient(pathXY(:,2)), gradient(pathXY(:,1))));
 pathCurvature = gradient(pathHeading) ./ gradient(pathS);
 x = interp1(pathS, pathXY(:,1), distance);
@@ -269,6 +294,11 @@ y = interp1(pathS, pathXY(:,2), distance);
 yaw = interp1(pathS, pathHeading, distance);
 curvature = interp1(pathS, pathCurvature, distance);
 motionSpeed = interp1(pathS, pathSpeed, distance);
+flagStopped = false(size(timeValues));
+for ith_stop = 1:size(stopWindows,1)
+    flagStopped = flagStopped | (timeValues >= stopWindows(ith_stop,1) & timeValues <= stopWindows(ith_stop,2));
+end
+motionSpeed(flagStopped) = 0;
 
 %%%% Wheels: rolling, and steered by Ackermann from the curvature
 vehicleSpec = options.VehicleSpec;
@@ -290,7 +320,7 @@ else
 end
 lightStates = repmat(struct('Headlights','low', 'TurnLeft',false, 'TurnRight',false, 'Running',false, ...
     'Tail','on', 'Backup',false), numel(timeValues), 1);
-[lightStates(acceleration < -0.3).Tail] = deal('brake');
+[lightStates(acceleration < -0.3 | flagStopped).Tail] = deal('brake');
 
 %%%% The body on its wheels (the sprung mass): pitch from speeding up and
 %%%% braking, roll from turning (accelerations smoothed over about 0.5 s)

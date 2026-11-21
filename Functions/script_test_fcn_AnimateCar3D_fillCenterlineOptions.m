@@ -92,6 +92,38 @@ assert(isequal(get(gcf,'Number'),figNum));
 close all;
 fprintf(1,'Figure: 2XXXXXX: TEST cases\n');
 
+%% TEST case: The urban grid: through more than one junction, changing lanes between them
+figNum = 20006;
+titleString = sprintf('TEST case: The urban grid: through more than one junction, changing lanes between them');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+gridNetwork = fcn_AnimateCar3D_fillRoad(Preset='urbanGrid', FigNum=-1);
+gridOptions = fcn_AnimateCar3D_fillCenterlineOptions(gridNetwork, FigNum=figNum);
+gridNames = cellfun(@(o) o.Name, gridOptions, 'UniformOutput', false);
+% (at each junction: left from lane 1; straight or right from lane 2;
+% straight on leads to the next junction, in either lane)
+assert(numel(gridOptions)==7);
+assert(all(ismember({'straight, straight, straight', 'right turn', 'lane -1, left turn', 'straight, lane -1, left turn', ...
+    'straight, straight, right turn', 'straight, straight, lane -1, left turn'}, gridNames)));
+for ith_option = 1:numel(gridOptions)
+    thisOption = gridOptions{ith_option};
+    steps = hypot(diff(thisOption.XY(:,1)), diff(thisOption.XY(:,2)));
+    assert(max(steps) <= 1.05 && min(steps) > 1e-6);          % (no gaps, no repeats; a little over 1 m while changing lanes)
+    assert(max(headingError(thisOption.Heading(2:end), thisOption.Heading(1:end-1))) < 0.6);   % (no flips: a right turn's radius is 1.8 m)
+end
+% (the lane change: from lane -2 to lane -1 at mid-block, 3.6 m across)
+changing = gridOptions{strcmp(gridNames, 'straight, lane -1, left turn')};
+assert(any(strcmp({changing.Route.Road}, '2') & [changing.Route.LaneID]==-1));
+onBlock = changing.XY(:,1) > 75 & changing.XY(:,1) < 159;                      % (the block between junctions 1 and 2)
+assert(max(abs(diff(changing.XY(onBlock,2)))) < 0.3 && abs(changing.XY(find(onBlock,1),2) + 5.4) < 1e-6 && abs(changing.XY(find(onBlock,1,'last'),2) + 1.8) < 1e-6);
+throughAll = gridOptions{strcmp(gridNames, 'straight, straight, straight')};
+assert(all(abs(throughAll.XY(:,2) + 5.4) < 1e-6) && abs(throughAll.XY(end,1) - (60 + 2*100 + 2*7.2 + 60)) < 1e-6);
+firstOnly = fcn_AnimateCar3D_fillCenterlineOptions(gridNetwork, MaxJunctions=1);
+assert(numel(firstOnly)==3);
+shortChange = fcn_AnimateCar3D_fillCenterlineOptions(gridNetwork, LaneChangeLength=10);
+assert(numel(shortChange)==7);
+
 %% TEST case: Roads: stay, change lanes, pass in the oncoming lane where allowed
 figNum = 20001;
 titleString = sprintf('TEST case: Roads: stay, change lanes, pass in the oncoming lane where allowed');
@@ -121,6 +153,18 @@ referencePoints = fcn_AnimateCar3D_getRoadPoints(curvyRoad, (0:0.1:curvyRoad.Len
 distances = min(hypot(path.XY(:,1) - referencePoints(:,1)', path.XY(:,2) - referencePoints(:,2)'), [], 2);
 assert(all(abs(distances - 1.8) < 0.01));
 assert(abs(path.S(end) - curvyRoad.Length) < 15);                        % (the lane's length differs a little on curves)
+
+%% TEST case: A closed course: one lap along the track's center and each half
+figNum = 20005;
+titleString = sprintf('TEST case: A closed course: one lap along the track''s center and each half');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+raceRoad = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', FigNum=-1);
+lapOptions = fcn_AnimateCar3D_fillCenterlineOptions(raceRoad, FigNum=figNum);
+assert(numel(lapOptions)==3 && isequal(cellfun(@(o) o.Route.LaneID, lapOptions), [0 -1 1]));
+assert(norm(lapOptions{1}.XY(end,:) - lapOptions{1}.XY(1,:)) < 1e-6);          % (back to the start)
+assert(abs(lapOptions{1}.S(end) - raceRoad.Length) < 1);
 
 %% TEST case: Another start; the version with a right-turn lane
 figNum = 20003;

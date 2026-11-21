@@ -139,6 +139,37 @@ liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, LiveState=liveState, 
 assert(liveState.ShowTime > 1 && liveState.ShowTime < 1.5);       % moves on with the clock, not a jump to 3 s
 rmdir(liveFolder, 's');
 
+%% TEST case: Time modes ('exact': data time = clock time) and a frame rate
+figNum = 20007;
+titleString = sprintf('TEST case: Time modes (''exact'': data time = clock time) and a frame rate');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+liveFolder = newFolder();
+fcn_AnimateCar3D_writeLiveTestFiles(liveFolder, liveList, liveMotions, 6);
+% (exact: the shown time is the clock's, here a clock stopped at 3.5 s)
+liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, Steps=1, TimeMode='exact', Clock=@() 3.5, DisplayDelay=0, FigNum=figNum);
+assert(abs(liveState.ShowTime - 3.5) < 1e-9);
+liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, LiveState=liveState, Steps=1, TimeMode='exact', Clock=@() 103.5, ...
+    TimeOffset=-100, DisplayDelay=0.5);
+assert(abs(liveState.ShowTime - 3.0) < 1e-9);                      % (TimeOffset and DisplayDelay)
+liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, LiveState=liveState, Steps=1, TimeMode='exact', Clock=@() 50, DisplayDelay=0);
+assert(abs(liveState.ShowTime - liveState.LatestTime) < 1e-9);     % (past the data: holds at the newest)
+% (a real clock: today's seconds, with the offset that makes the data's 0 now)
+clockStart = seconds(datetime('now') - dateshift(datetime('now'), 'start', 'day'));
+liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, Steps=1, TimeMode='exact', Clock='daySeconds', TimeOffset=-clockStart + 2, ...
+    DisplayDelay=0, FigNum=figNum);
+assert(liveState.ShowTime >= 2 && liveState.ShowTime < 3);
+% (a frame rate: about 4 steps a second, in run mode, on a clock that
+% starts now: the data play as if happening now)
+runTimer = tic;
+liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, FrameRate=4, TimeMode='exact', Clock=@() toc(runTimer), DisplayDelay=0, ...
+    MaxSeconds=2, FigNum=figNum);
+assert(contains(liveState.DoneReason, 'MaxSeconds') && liveState.Stats.StepsDrawn >= 4);
+assert(liveState.Stats.FramesPerSecond <= 4.4 && liveState.Stats.Steps <= 4.4*toc(runTimer) + 1);
+assert(liveState.ShowTime > 1 && liveState.ShowTime < 2.6);         % (the clock's time)
+rmdir(liveFolder, 's');
+
 %% TEST case: A criteria file in the folder changes the criteria
 figNum = 20003;
 titleString = sprintf('TEST case: A criteria file in the folder changes the criteria');

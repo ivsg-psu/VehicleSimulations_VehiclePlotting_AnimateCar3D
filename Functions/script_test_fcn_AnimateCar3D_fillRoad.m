@@ -225,6 +225,61 @@ assert(road.EgoStart.LaneID==-3 && road.EgoStart.S==0);
 [~, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset='twoLane');
 assert(iscell(centerlineOptions) && numel(centerlineOptions)==2);
 
+%% TEST case: The urban grid: cross streets, a junction at each, connections that meet the lanes
+figNum = 20030;
+titleString = sprintf('TEST case: The urban grid: cross streets, a junction at each, connections that meet the lanes');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+network = fcn_AnimateCar3D_fillRoad(Preset='urbanGrid', FigNum=figNum);
+assert(numel(network.Junctions)==3 && numel(network.Roads)==4 + 2*3);
+assert(abs(network.Roads(2).Length - (100 - 4*3.6)) < 1e-9);
+assert(strcmp(network.Roads(2).Predecessor.ElementID,'1') && strcmp(network.Roads(2).Successor.ElementID,'2'));
+assert(isempty(network.Roads(1).Predecessor.ElementID) && strcmp(network.Roads(1).Successor.ElementID,'1'));
+% (the lane line before each junction is solid; broken mid-block)
+link = network.Roads(2);
+assert(strcmp(link.LaneSections(1).Left(1).RoadMark.Type,'solid') && strcmp(link.LaneSections(2).Left(1).RoadMark.Type,'broken') ...
+    && strcmp(link.LaneSections(end).Right(1).RoadMark.Type,'solid'));
+headingError = @(a, b) abs(atan2(sin(a - b), cos(a - b)));
+for ith_junction = 1:3
+    connections = network.Junctions(ith_junction).Connections;
+    assert(numel(connections)==4*3 && sum(strcmp({connections.Turn},'left'))==4 && sum(strcmp({connections.Turn},'straight'))==4);
+    for ith_connection = 1:numel(connections)
+        thisConnection = connections(ith_connection);
+        pathEnds = fcn_AnimateCar3D_getRoadPoints(thisConnection.Path, [0; thisConnection.Path.Length]);
+        inRoad = network.Roads(strcmp({network.Roads.ID}, thisConnection.IncomingRoad));
+        outRoad = network.Roads(strcmp({network.Roads.ID}, thisConnection.OutgoingRoad));
+        inS = inRoad.Length*(thisConnection.IncomingLane < 0);       % (coming in: left lanes at s = 0, right lanes at the end)
+        outS = outRoad.Length*(thisConnection.OutgoingLane > 0);
+        laneIn = fcn_AnimateCar3D_getRoadPoints(inRoad, inS, LaneID=thisConnection.IncomingLane);
+        laneOut = fcn_AnimateCar3D_getRoadPoints(outRoad, outS, LaneID=thisConnection.OutgoingLane);
+        assert(norm(pathEnds(1,1:2) - laneIn(1:2)) < 1e-3 && norm(pathEnds(2,1:2) - laneOut(1:2)) < 1e-3);
+        assert(headingError(pathEnds(1,3), laneIn(3) + pi*(thisConnection.IncomingLane > 0)) < 1e-6);
+        assert(headingError(pathEnds(2,3), laneOut(3) + pi*(thisConnection.OutgoingLane > 0)) < 1e-6);
+    end
+end
+% (buildings: behind the sidewalks; tall to the north, low to the south)
+mainObjects = [network.Roads(1:4).Objects];
+buildings = mainObjects(strcmp({mainObjects.Type},'building'));
+assert(all(abs([buildings.T]) > 2*3.6 + 0.15 + 2.5) && min([buildings([buildings.T] > 0).Height]) >= 6 && max([buildings([buildings.T] < 0).Height]) <= 7.5);
+% (no building reaches into a cross street: each lies outside every
+% cross street's band, out to its grass)
+crossBand = 2*3.6 + 0.15 + 2.5 + 1.5;
+for ith_road = 1:4
+    thisRoad = network.Roads(ith_road);
+    roadBuildings = thisRoad.Objects(strcmp({thisRoad.Objects.Type},'building'));
+    for thisBuilding = roadBuildings
+        buildingCenter = fcn_AnimateCar3D_getRoadPoints(thisRoad, thisBuilding.S, T=thisBuilding.T);
+        for ith_junction = 1:3
+            alongDistance = abs(buildingCenter(1) - network.Junctions(ith_junction).Center(1));
+            assert(alongDistance - thisBuilding.Length/2 > crossBand - 1e-9);
+        end
+    end
+end
+assert(strcmp(network.EgoStart.Road,'1') && network.EgoStart.LaneID==-2 && network.EgoStart.Direction==1);
+network = fcn_AnimateCar3D_fillRoad(Preset='urbanGrid', CrossStreets=1, BlockLength=60);
+assert(numel(network.Junctions)==1 && numel(network.Roads)==4);
+
 %% TEST case: Heights: hilly (grade within limits) and banked (down to the inside of curves)
 figNum = 20009;
 titleString = sprintf('TEST case: Heights: hilly (grade within limits) and banked (down to the inside of curves)');
@@ -268,6 +323,65 @@ assert(abs(bankAngles(1,2)) < 1e-12 && bankAngles(2,2) < 0 && bankAngles(3,2) > 
 assert(abs(tan(bankAngles(3,2)) - 0.06) < 1e-9);                         % (the tightest curve: 50 m radius)
 [~, ~, insideZ] = fcn_AnimateCar3D_getRoadPoints(bankedRoad, [100; 100], T=[3; -3]);
 assert(insideZ(1) < insideZ(2));                                         % (left curve: the left side lower)
+
+%% TEST case: The race course: traced from a photo, closed, straights of two 12 ft lanes
+figNum = 20011;
+titleString = sprintf('TEST case: The race course: traced from a photo, closed, straights of two 12 ft lanes');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+[raceRoad, raceOptions] = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', FigNum=figNum);
+assert(strcmp(raceRoad.Name,'raceCourse') && raceRoad.Loop && abs(raceRoad.Length - 452.4) < 1);
+% (closed: the end meets the start, in place and heading)
+[ends] = fcn_AnimateCar3D_getRoadPoints(raceRoad, [0; raceRoad.Length - 1e-9]);
+assert(norm(ends(1,1:2) - ends(2,1:2)) < 0.01 && abs(angdiff(ends(1,3), ends(2,3))) < 1e-3);
+% (the start: heading west on the bottom straight, two 12 ft lanes)
+assert(abs(ends(1,3) - pi) < 1e-6);
+section = raceRoad.LaneSections(1);
+assert(abs(section.Right(1).Width(1) - 12*0.3048) < 1e-3 && abs(section.Left(1).Width(1) - 12*0.3048) < 1e-3);
+% (the top straight: a broken center line)
+topSections = arrayfun(@(sec) strcmp(sec.Center.RoadMark.Type, 'broken'), raceRoad.LaneSections);
+assert(sum(topSections) >= 10);
+% (banked curbs somewhere, the pit lane beside the start, walls, stripes, a start line)
+curbHeights = arrayfun(@(sec) max([sec.Right(3).Height(2), sec.Left(3).Height(2)]), raceRoad.LaneSections);
+assert(sum(curbHeights > 0.05) > 15 && max(curbHeights) < 0.2);
+assert(numel(section.Left)==4 && abs(section.Left(4).Width(1) - 12*0.3048) < 1e-3);
+types = {raceRoad.Objects.Type};
+assert(sum(strcmp(types,'wall'))==10 && sum(strcmp(types,'stripe'))==3 && all([raceRoad.Objects(strcmp(types,'wall')).Height]==1.35));
+% (paths: one lap along the track's center and each half)
+assert(numel(raceOptions)==3 && strcmp(raceOptions{1}.Name,'track center') && abs(raceOptions{1}.S(end) - raceRoad.Length) < 1);
+
+%% TEST case: The race course variants: hilly, banked, and both
+figNum = 20012;
+titleString = sprintf('TEST case: The race course variants: hilly, banked, and both');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+hillyRace = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', Elevation='hilly', FigNum=-1);
+sLap = (0:0.5:hillyRace.Length - 0.5)';
+[lapPoints, ~, lapZ, lapAngles] = fcn_AnimateCar3D_getRoadPoints(hillyRace, sLap);
+assert(max(lapZ) - min(lapZ) > 2 && max(lapZ) - min(lapZ) <= 4 + 1e-6);           % (about 4 m)
+assert(max(abs(tan(lapAngles(:,1)))) <= 0.06 + 0.01);                             % (grades up to 6%)
+[~, ~, closeZ] = fcn_AnimateCar3D_getRoadPoints(hillyRace, [0; hillyRace.Length - 1e-6]);
+assert(abs(diff(closeZ)) < 0.01);                                                  % (the loop's heights close)
+onStraights = abs(lapPoints(:,2)) < 1e-6 | abs(lapPoints(:,2) - max(lapPoints(:,2))) < 1e-6;
+assert(max(abs(lapAngles(onStraights,1))) < 2e-3);                                 % (the straights level)
+bankedRace = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', CrossSlope='banked', FigNum=-1);
+[~, ~, ~, bankAngles] = fcn_AnimateCar3D_getRoadPoints(bankedRace, sLap);
+assert(max(abs(bankAngles(:,2))) > 0.05 && max(abs(bankAngles(:,2))) <= atan(0.06) + 1e-9);
+% (down to the inside: mostly opposite in sign to the curvature; one curve the other way)
+curvatures = zeros(numel(bankedRace.PlanView),1);
+for ith_geometry = 1:numel(bankedRace.PlanView)
+    if strcmp(bankedRace.PlanView(ith_geometry).Type, 'arc')
+        curvatures(ith_geometry) = bankedRace.PlanView(ith_geometry).Curvature;
+    end
+end
+geometryRoll = [bankedRace.LateralProfile.Superelevation.A]';
+flagCurved = abs(curvatures) > 1/30 & abs(geometryRoll) > 0.03;
+agree = sign(geometryRoll(flagCurved))==-sign(curvatures(flagCurved));
+assert(mean(agree) > 0.8 && any(~agree));
+bothRace = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', Elevation='hilly', CrossSlope='banked', FigNum=-1);
+assert(numel(bothRace.ElevationProfile) > 100 && numel(bothRace.LateralProfile.Superelevation) > 100);
 
 %% TEST case: The mountain road: long, winding, climbing and descending, clear of itself
 figNum = 20010;

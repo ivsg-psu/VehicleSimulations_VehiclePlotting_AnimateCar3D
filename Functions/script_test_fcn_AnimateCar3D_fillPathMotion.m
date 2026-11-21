@@ -120,6 +120,12 @@ assert(abs(slowing.Speed(1) - 15) < 1e-9 && abs(slowing.Speed(end) - 5) < 1e-6);
 assert(all(strcmp({slowing.LightStates(2:end-1).Tail}, 'brake')));
 middle = round(numel(slowing.Time)/2);
 assert(slowing.BodyPitch(middle) > 0 && all(abs(slowing.BodyRoll) < 1e-9));   % (nose down when braking)
+% (a stop: waits 3 s at 50 m, brake lights on)
+straightPath = [(0:1:100)' zeros(101,1)];
+stopping = fcn_AnimateCar3D_fillPathMotion(straightPath, Speed=@(s) max(0.1, min(10, sqrt(2*2*abs(s - 50)))), Stops=[50 3], FigNum=-1);
+stoppedRows = abs(stopping.Distance - 50) < 1e-6;
+assert(max(stopping.Time(stoppedRows)) - min(stopping.Time(stoppedRows)) >= 3 - 0.06 && all(stopping.Speed(stoppedRows)==0));
+assert(all(strcmp({stopping.LightStates(stoppedRows).Tail}, 'brake')) && abs(stopping.Distance(end) - 100) < 1e-9);
 byPoint = fcn_AnimateCar3D_fillPathMotion(straightPath, Speed=linspace(5, 10, 101)');
 assert(all(strcmp({byPoint.LightStates.Tail}, 'on')) && abs(byPoint.Speed(end) - 10) < 1e-6);
 

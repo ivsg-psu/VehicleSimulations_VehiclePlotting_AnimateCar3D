@@ -10,15 +10,19 @@ function liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, options)
 %      (fcn_AnimateCar3D_updateCatalog), and applies any change to the
 %      folder's displayCriteria.txt (fcn_AnimateCar3D_changeDisplayCriteria),
 %   3. loads the meshes of any new mesh IDs (fcn_AnimateCar3D_loadMeshes),
-%   4. chooses the time to show: it advances with the clock (times
-%      PlaybackSpeed), never closer than DisplayDelay seconds to the
+%   4. chooses the time to show (TimeMode): 'relative' (the default),
+%      it advances with the clock (times PlaybackSpeed: 1 s of clock is
+%      1 s of animation), never closer than DisplayDelay seconds to the
 %      newest data, so the picture moves smoothly although data arrives
-%      in bursts,
+%      in bursts; or 'exact', the data's time is the clock's (Clock,
+%      plus TimeOffset), and the picture shows the clock's time less
+%      DisplayDelay, holding at the newest data if the data fall behind,
 %   5. points the camera (a CarMesh3D camera, fcn_CarMesh3D_updateCamera,
 %      following the object CameraFollow),
 %   6. selects and draws (fcn_AnimateCar3D_selectObjects,
 %      fcn_AnimateCar3D_playScene), with a caption,
-%   7. saves a GIF frame (GifFile).
+%   7. saves a GIF frame (GifFile),
+%   8. waits, if need be, so the steps come no faster than FrameRate.
 %
 % Two ways to use it:
 %
@@ -47,6 +51,7 @@ function liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, options)
 %           (LiveState=liveState), (Steps=n), (Criteria=criteria),...
 %           (DefaultMeshID=meshID), (CheckInterval=s), (ForceCheck=flag),...
 %           (DisplayDelay=s), (PlaybackSpeed=factor), (ShowTime=t),...
+%           (TimeMode=mode), (Clock=clock), (TimeOffset=s), (FrameRate=fps),...
 %           (CameraSettings=settings), (CameraFollow=instance),...
 %           (StopAfter=s), (MaxSeconds=s), (GroundExtent=extent),...
 %           (Caption=caption), (GifFile=fileName), (GifEvery=n), (GifDelay=s),...
@@ -86,6 +91,26 @@ function liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, options)
 %      DisplayDelay: how far behind the newest data the picture stays,
 %      seconds [1].
 %      PlaybackSpeed: scene seconds per clock second [1].
+%      TimeMode: how the data's time follows the clock: 'relative'
+%      (default; 1 s of clock is PlaybackSpeed s of animation, starting
+%      DisplayDelay behind the newest data) or 'exact' (the data's time
+%      is the clock's time: data stamped with the time they were
+%      measured play as they happen, DisplayDelay behind).
+%
+%      Clock: for TimeMode 'exact', the clock the data's times use:
+%      'posix' (default; seconds since 1970-01-01 UTC, as
+%      posixtime(datetime('now'))), 'daySeconds' (seconds since local
+%      midnight), or a function handle that returns the time now, in the
+%      data's seconds.
+%
+%      TimeOffset: seconds added to the clock for TimeMode 'exact' (for
+%      data whose time 0 is a known clock time: TimeOffset = -that time)
+%      [0].
+%
+%      FrameRate: the most steps per second (clock): each step waits out
+%      the rest of 1/FrameRate after its work [[]: as fast as it can].
+%      liveState.Stats.FramesPerSecond reports the rate drawn.
+%
 %      ShowTime: the scene time to show at this step, in place of the
 %      clock (for scripted playback and tests) [[]: from the clock]. A
 %      time past the newest data read so far is not drawn.
@@ -132,7 +157,9 @@ function liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, options)
 %           Figure, Axes: where it draws
 %           Stats: Steps (in all), StepsDrawn, Checks, CriteriaChanges,
 %               the last step's NumObjects, NumNear, NumMiddle, NumFar,
-%               NumPaths, and mean StepSeconds (watch to draw)
+%               NumPaths, mean StepSeconds (watch to draw), and
+%               FramesPerSecond (drawn steps per clock second, since the
+%               first)
 %           GifFrames: frames saved
 %
 % DEPENDENCIES:
@@ -161,12 +188,16 @@ function liveState = fcn_AnimateCar3D_playLive(liveFolder, meshSet, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playLive
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_playLive
+%   % * Added TimeMode ('relative' or 'exact', with Clock and TimeOffset) and FrameRate (pacing); Stats.FramesPerSecond
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playLive
-%   % * An optional TargetFrameRate input, to pace the run mode (it now draws as fast as it can)
+%   % * Skip frames (draw the latest time) when a step takes longer than 1/FrameRate
 
 
 
@@ -188,6 +219,10 @@ arguments
     options.DisplayDelay = 1            % seconds behind the newest data
     options.PlaybackSpeed = 1           % scene seconds per clock second
     options.ShowTime = []               % scene time to show now; [] from the clock
+    options.TimeMode = 'relative'       % 'relative' (clock-paced) or 'exact' (data time = clock time)
+    options.Clock = 'posix'             % 'exact' mode clock: 'posix', 'daySeconds', or @() timeNow
+    options.TimeOffset = 0              % seconds added to the clock ('exact' mode)
+    options.FrameRate = []              % most steps per second; [] as fast as it can
     options.CameraSettings = 'default'  % fcn_CarMesh3D_fillCameraSettings; [] keeps the camera
     options.CameraFollow = 'ego'        % instance the camera follows
     options.StopAfter = 10              % seconds (clock) with no new data; Inf keeps it open
@@ -273,6 +308,18 @@ if 0==flag_max_speed
         end
         if ~isnumeric(options.DisplayDelay) || ~isscalar(options.DisplayDelay) || options.DisplayDelay<0
             error('DisplayDelay must be a non-negative number of seconds');
+        end
+        if ~any(strcmpi(options.TimeMode, {'relative','exact'}))
+            error('TimeMode must be ''relative'' or ''exact''');
+        end
+        if ~(isa(options.Clock, 'function_handle') || any(strcmpi(options.Clock, {'posix','daySeconds'})))
+            error('Clock must be ''posix'', ''daySeconds'', or a function handle');
+        end
+        if ~(isnumeric(options.TimeOffset) && isscalar(options.TimeOffset) && isfinite(options.TimeOffset))
+            error('TimeOffset must be a number of seconds');
+        end
+        if ~isempty(options.FrameRate) && ~(isnumeric(options.FrameRate) && isscalar(options.FrameRate) && options.FrameRate > 0)
+            error('FrameRate must be a positive number of steps per second, or []');
         end
         if ~isempty(options.ShowTime) && ~(isnumeric(options.ShowTime) && isscalar(options.ShowTime))
             error('ShowTime must be a time in seconds, or []');
@@ -416,6 +463,9 @@ while stepCount < options.Steps
     newestShowable = liveState.LatestTime - options.DisplayDelay;
     if ~isempty(options.ShowTime)
         showTime = options.ShowTime;
+    elseif strcmpi(options.TimeMode, 'exact')
+        % (the data's time is the clock's; hold at the newest data)
+        showTime = min(fcn_INTERNAL_clockTime(options.Clock) + options.TimeOffset - options.DisplayDelay, liveState.LatestTime);
     elseif isnan(liveState.ShowTime)
         showTime = newestShowable;
     else
@@ -456,6 +506,11 @@ while stepCount < options.Steps
         fcn_INTERNAL_caption(liveState, options.Caption);
         drawnow;
         liveState.Stats.StepsDrawn = liveState.Stats.StepsDrawn + 1;
+        if liveState.Stats.StepsDrawn==1
+            liveState.FirstDrawClock = toc(liveState.StartClock);
+        elseif toc(liveState.StartClock) > liveState.FirstDrawClock
+            liveState.Stats.FramesPerSecond = (liveState.Stats.StepsDrawn - 1)/(toc(liveState.StartClock) - liveState.FirstDrawClock);
+        end
 
         % 7. A GIF frame
         if ~isempty(options.GifFile) && mod(liveState.Stats.StepsDrawn-1, options.GifEvery)==0
@@ -476,7 +531,9 @@ while stepCount < options.Steps
         liveState = fcn_INTERNAL_finish(liveState, sprintf('MaxSeconds (%g s) reached', options.MaxSeconds));
         break;
     end
-    if ~flagDrawable && stepCount < options.Steps
+    if ~isempty(options.FrameRate) && (flagDrawable || stepCount < options.Steps)
+        pause(max(0, 1/options.FrameRate - toc(stepTimer)));  % 8. (pace the steps)
+    elseif ~flagDrawable && stepCount < options.Steps
         pause(0.05);                                          % (waiting for data)
     end
 end
@@ -539,7 +596,8 @@ liveState.DefaultCamera = fcn_CarMesh3D_fillCameraSettings(Mode='kite', FigNum=-
 liveState.GifFrames = 0;
 liveState.GifColorMap = [];
 liveState.Stats = struct('Steps',0, 'StepsDrawn',0, 'Checks',0, 'CriteriaChanges',0, 'NumObjects',0, 'NumNear',0, ...
-    'NumMiddle',0, 'NumFar',0, 'NumPaths',0, 'StepSeconds',0, 'StepSecondsTotal',0);
+    'NumMiddle',0, 'NumFar',0, 'NumPaths',0, 'StepSeconds',0, 'StepSecondsTotal',0, 'FramesPerSecond',NaN);
+liveState.FirstDrawClock = NaN;
 
 % The figure: the current one in fast mode, else FigNum
 if isequal(options.FigNum, -1)
@@ -563,6 +621,18 @@ function liveState = fcn_INTERNAL_finish(liveState, reason)
 liveState.Done = true;
 liveState.DoneReason = reason;
 end % Ends fcn_INTERNAL_finish
+
+%% fcn_INTERNAL_clockTime
+function timeNow = fcn_INTERNAL_clockTime(clockChoice)
+% The time now on the chosen clock, in seconds
+if isa(clockChoice, 'function_handle')
+    timeNow = clockChoice();
+elseif strcmpi(clockChoice, 'posix')
+    timeNow = posixtime(datetime('now', 'TimeZone','UTC'));
+else
+    timeNow = seconds(datetime('now') - dateshift(datetime('now'), 'start', 'day'));
+end
+end % Ends fcn_INTERNAL_clockTime
 
 %% fcn_INTERNAL_caption
 function fcn_INTERNAL_caption(liveState, captionOption)

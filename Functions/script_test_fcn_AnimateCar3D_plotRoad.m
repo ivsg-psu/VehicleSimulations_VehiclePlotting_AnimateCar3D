@@ -225,6 +225,21 @@ clf;
 again = fcn_AnimateCar3D_plotRoad(urbanRoad, TimeOfDay='night', FigNum=figNum);
 assert(isequal(again.Windows.Vertices, nightWindows));
 
+%% TEST case: The race course: striped banked curbs, walls, stripes, finer samples
+figNum = 20013;
+titleString = sprintf('TEST case: The race course: striped banked curbs, walls, stripes, finer samples');
+fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
+figure(figNum); close(figNum);
+
+raceRoad = fcn_AnimateCar3D_fillRoad(Preset='raceCourse', FigNum=-1);
+raceHandles = fcn_AnimateCar3D_plotRoad(raceRoad, FigNum=figNum);
+surfaceColors = raceHandles.Surface.FaceVertexCData;
+assert(sum(all(abs(surfaceColors - [0.78 0.14 0.14]) < 1e-9, 2)) > 200);      % (red curb stripes)
+objectColors = raceHandles.Objects.FaceVertexCData;
+assert(sum(all(abs(objectColors - [0.80 0.16 0.16]) < 1e-9, 2)) > 100);       % (red wall pieces)
+assert(max(raceHandles.Objects.Vertices(:,3)) > 1.3 && max(raceHandles.Objects.Vertices(:,3)) < 1.4);   % (walls 1.35 m high)
+assert(raceHandles.NumFaces > 8000);                                            % (sampled every 0.5 m)
+
 %% Fast Mode Tests
 
 %% Basic example - NO FIGURE NUMBER (the current axes)

@@ -32,6 +32,41 @@ function scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName, options)
 %                         wheels exaggerated 6 times so they show; the
 %                         camera tilts with the road (CameraPitch 'road')
 %
+% ONE VEHICLE ON THE RACE COURSE:
+%
+%   'raceCourse'          one lap of the race course traced from a photo
+%                         (fcn_AnimateCar3D_fillRoad 'raceCourse'), along
+%                         the track's center: up to 22 m/s on the
+%                         straights, no more than 6 m/s^2 sideways in the
+%                         corners, braking at up to 6 m/s^2
+%   'raceCourseHills'     the same lap on the race course with hills
+%                         (about 4 m, the straights level) and banked
+%                         curves (the bottom-rightmost the other way):
+%                         the vehicle rides the surface, the ground is
+%                         drawn around it
+%
+% SEVERAL OBJECTS:
+%
+%   'following'           the two-lane road: a lead car (red) starts 30 m
+%                         ahead at 14 m/s, brakes to 5 m/s, and speeds up
+%                         again; the ego follows it 1.5 s behind (its own
+%                         brake lights as it slows)
+%   'passing'             the two-lane road: a slow car (gray) at 8 m/s,
+%                         40 m ahead; the ego, at 15 m/s, signals left,
+%                         moves into the oncoming lane, passes, signals
+%                         right, and moves back
+%   'pedestrianCrossing'  the urban street: the ego (12 m/s) brakes to a
+%                         stop 2 m before a crosswalk while a pedestrian
+%                         crosses it, waits until the pedestrian is clear
+%                         of its lane, and drives on
+%   'urbanGrid'           the urban grid (three cross streets): the ego
+%                         goes straight through the first junction,
+%                         changes to the left-turn lane, and turns left
+%                         at the second (centerline option 'straight,
+%                         lane -1, left turn'), slowing for the turns; a
+%                         car (dark green) drives the main street the
+%                         other way
+%
 % Each vehicle is the CarMesh3D sample car ('sample'), named 'ego'.
 %
 % FORMAT:
@@ -92,12 +127,16 @@ function scenario = fcn_AnimateCar3D_fillExampleScenario(scenarioName, options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillExampleScenario
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillExampleScenario
+%   % * Added the several-object examples: following, passing, pedestrianCrossing
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillExampleScenario
-%   % * Multi-object examples: passing, following, stopping for a pedestrian at a crosswalk
+%   % * Cross traffic at an intersection (after the cross streets)
 
 
 
@@ -167,7 +206,7 @@ if 0==flag_max_speed
         if ~((ischar(options.TimeOfDay) || isstring(options.TimeOfDay)) && any(strcmpi(char(options.TimeOfDay), {'day','night'})))
             error('TimeOfDay must be ''day'' or ''night''');
         end
-        exampleNames = {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'};
+        exampleNames = {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad','raceCourse','raceCourseHills','following','passing','pedestrianCrossing','urbanGrid'};
         if ~(ischar(scenarioName) || isstring(scenarioName)) || (~isempty(char(scenarioName)) && ~any(strcmp(char(scenarioName), exampleNames)))
             error('scenarioName must be one of: %s', strjoin(exampleNames, ', '));
         end
@@ -196,12 +235,18 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-exampleList = struct('Name',{'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}, ...
+exampleList = struct('Name',{'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad','raceCourse','raceCourseHills','following','passing','pedestrianCrossing','urbanGrid'}, ...
     'Description',{'One vehicle on the two-lane road: a lane change to the left at a constant 15 m/s', ...
                    'One vehicle on the curvy road, following its lane at a constant 12 m/s', ...
                    'One vehicle on the curvy road, following its lane, slowing for the curves', ...
                    'One vehicle on the curvy road with hills and banked curves, at a constant 12 m/s', ...
-                   'One vehicle up and over the mountain road (12% grades, banking, hairpins), slowing for the curves'});
+                   'One vehicle up and over the mountain road (12% grades, banking, hairpins), slowing for the curves', ...
+                   'One lap of the race course traced from a photo, along the track''s center, braking for the corners', ...
+                   'One lap of the race course with hills (about 4 m) and banked curves, riding the surface', ...
+                   'Following: a lead car speeds up and brakes; the ego follows it, 1.5 s behind', ...
+                   'Passing: the ego overtakes a slow car through the oncoming lane, signaling', ...
+                   'Stopping for a pedestrian: the ego stops at a crosswalk while a pedestrian crosses, then drives on', ...
+                   'Urban grid: straight through one junction, a lane change, a left turn at the next; a car going the other way'});
 
 %%%% No name: the list
 if isempty(char(scenarioName))
@@ -259,14 +304,129 @@ switch scenarioName
         pathS = centerlineOptions{1}.S;
         egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 20, 2.0, 1.5, 2.0, 12), ...
             Instance='ego', Road=road, BodyMotionScale=6, FigNum=-1);
+    case 'raceCourse'
+        roadPreset = 'raceCourse';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY;
+        pathS = centerlineOptions{1}.S;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 22, 6.0, 3.0, 6.0, 15), ...
+            Instance='ego', FigNum=-1);
+    case 'raceCourseHills'
+        roadPreset = 'raceCourse';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Elevation='hilly', CrossSlope='banked', ...
+            Seed=options.Seed, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY;
+        pathS = centerlineOptions{1}.S;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 22, 6.0, 3.0, 6.0, 15), ...
+            Instance='ego', Road=road, FigNum=-1);
+    case 'following'
+        roadPreset = 'twoLane';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Length=400, Seed=options.Seed, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY; pathS = centerlineOptions{1}.S;
+        % (the lead's distance over time: 14 m/s, braking to 5 m/s at 3 m/s^2
+        % from 6 s, then speeding up at 2 m/s^2 to 14 m/s from 11 s)
+        timeGrid = (-3:0.05:30)';
+        leadSpeed = 14 - min(9, 3*max(0, timeGrid - 6)) + min(9, 2*max(0, timeGrid - 11));
+        leadS = 30 + cumtrapz(timeGrid, leadSpeed) - interp1(timeGrid, cumtrapz(timeGrid, leadSpeed), 0);
+        leadRows = pathS >= 30;
+        leadMotion = fcn_AnimateCar3D_fillPathMotion(pathXY(leadRows,:), Speed=interp1(leadS, leadSpeed, pathS(leadRows), 'linear', 14), ...
+            Instance='lead', FigNum=-1);
+        % (the ego: where the lead was 1.5 s before, 9 m back: a 30 m gap at 14 m/s)
+        egoS = interp1(timeGrid, leadS, timeGrid - 1.5, 'linear', 'extrap') - 9;
+        egoSpeed = interp1(timeGrid, leadSpeed, timeGrid - 1.5, 'linear', 14);
+        valid = egoS >= 0 & timeGrid >= 0;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY(pathS <= 330,:), Speed=interp1(egoS(valid), egoSpeed(valid), pathS(pathS <= 330), 'linear', 14), ...
+            Instance='ego', FigNum=-1);
+        extraRows = struct('instance','lead', 'role','traffic', 'meshID','sample', 'color',[0.80 0.15 0.12]);
+        extraMotions = {leadMotion};
+    case 'passing'
+        roadPreset = 'twoLane';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Length=320, Seed=options.Seed, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY; pathS = centerlineOptions{1}.S;
+        [~, rightT] = fcn_AnimateCar3D_getRoadPoints(road, 10, LaneID=-1, FigNum=-1);
+        [~, leftT] = fcn_AnimateCar3D_getRoadPoints(road, 10, LaneID=1, FigNum=-1);
+        % (the ego's offset across the road: out over 25-65 m, back over 125-165 m)
+        smoothStep = @(u) 3*min(max(u,0),1).^2 - 2*min(max(u,0),1).^3;
+        egoT = rightT + (leftT - rightT)*(smoothStep((pathS - 25)/40) - smoothStep((pathS - 125)/40));
+        passingPoints = fcn_AnimateCar3D_getRoadPoints(road, pathS, T=egoT, FigNum=-1);
+        passingXY = passingPoints(:,1:2);
+        keep = pathS <= 290;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(passingXY(keep,:), Speed=15, Instance='ego', FigNum=-1);
+        signalLeft = egoMotion.Distance >= 15 & egoMotion.Distance <= 65;
+        signalRight = egoMotion.Distance >= 115 & egoMotion.Distance <= 165;
+        [egoMotion.LightStates(signalLeft).TurnLeft] = deal(true);
+        [egoMotion.LightStates(signalRight).TurnRight] = deal(true);
+        slowRows = pathS >= 40 & pathS <= 185;   % (ends before the ego does)
+        slowMotion = fcn_AnimateCar3D_fillPathMotion(pathXY(slowRows,:), Speed=8, Instance='slow', FigNum=-1);
+        extraRows = struct('instance','slow', 'role','traffic', 'meshID','sample', 'color',[0.45 0.45 0.48]);
+        extraMotions = {slowMotion};
+    case 'pedestrianCrossing'
+        roadPreset = 'urbanStreet';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Seed=options.Seed, FigNum=-1);
+        pathXY = centerlineOptions{1}.XY; pathS = centerlineOptions{1}.S;
+        crosswalks = road.Objects(strcmp({road.Objects.Type}, 'crosswalk'));
+        crosswalkS = min([crosswalks([crosswalks.S] > 40).S]);
+        crosswalkLength = crosswalks([crosswalks.S]==crosswalkS).Length;
+        stopS = crosswalkS - crosswalkLength/2 - 2 - 2.4;      % (the front bumper 2 m before the crosswalk; half a car is about 2.4 m)
+        egoSpeed = @(s) max(0.1, min(12, sqrt(2*2.5*abs(s - stopS))));   % (braking and pulling away at 2.5 m/s^2)
+        % (the pedestrian: waits on the right sidewalk, 2 m from the curb,
+        % starts across at 1.3 m/s 2 s before the ego would reach the stop,
+        % and waits on the left sidewalk afterwards)
+        [~, laneEdgeT] = fcn_AnimateCar3D_getRoadPoints(road, crosswalkS, LaneID=-1, LaneEdge='outer', FigNum=-1);
+        laneWidth = abs(laneEdgeT);
+        walkT = [-(laneWidth + 2), laneWidth + 2];
+        walkSpeed = 1.3;
+        arrival = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=egoSpeed, Instance='ego', FigNum=-1);
+        arriveTime = arrival.Time(find(arrival.Distance >= stopS - 0.05, 1));
+        walkStart = arriveTime - 2;
+        clearTime = walkStart + (2 + laneWidth + 0.15 + 0.5)/walkSpeed;   % (past the center line by 0.5 m)
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=egoSpeed, Stops=[stopS, max(1, clearTime - arriveTime + 0.5)], ...
+            Instance='ego', FigNum=-1);
+        walkDuration = diff(walkT)/walkSpeed;
+        walkTime = unique([0; (walkStart:0.1:walkStart + walkDuration)'; walkStart + walkDuration; egoMotion.Time(end)]);
+        walkerT = walkT(1) + walkSpeed*min(max(walkTime - walkStart, 0), walkDuration);
+        walkPoints = fcn_AnimateCar3D_getRoadPoints(road, crosswalkS*ones(size(walkTime)), T=walkerT, FigNum=-1);
+        walkerMotion = struct('Instance','walker', 'Time',walkTime, 'Pose',[walkPoints(:,1:2), walkPoints(:,3) + pi/2]);
+        extraRows = struct('instance','walker', 'role','pedestrian', 'meshID','pedestrian', 'color',[0.85 0.25 0.20]);
+        extraMotions = {walkerMotion};
+    case 'urbanGrid'
+        roadPreset = 'urbanGrid';
+        [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(Preset=roadPreset, Seed=options.Seed, FigNum=-1);
+        optionNames = cellfun(@(o) o.Name, centerlineOptions, 'UniformOutput', false);
+        chosen = centerlineOptions{strcmp(optionNames, 'straight, lane -1, left turn')};
+        pathXY = chosen.XY; pathS = chosen.S;
+        egoMotion = fcn_AnimateCar3D_fillPathMotion(pathXY, Speed=fcn_INTERNAL_curveSpeeds(pathXY, pathS, 12, 2.5, 2.0, 3.0, 10), ...
+            Instance='ego', FigNum=-1);
+        signalLeft = pathXY(:,1) > 110 & pathXY(:,1) < 175;            % (signal for the lane change and the turn)
+        [egoMotion.LightStates(interp1(pathS, double(signalLeft), egoMotion.Distance, 'previous', 0) > 0.5).TurnLeft] = deal(true);
+        % (the other car: from the exit road's far end, west along the main
+        % street, straight through all three junctions)
+        exitRoad = road.Roads(strcmp({road.Roads.Name}, 'exit'));
+        otherOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, Start=struct('Road',exitRoad.ID, 'LaneID',2, ...
+            'S',exitRoad.Length, 'Direction',-1), FigNum=-1);
+        otherNames = cellfun(@(o) o.Name, otherOptions, 'UniformOutput', false);
+        westward = otherOptions{strcmp(otherNames, 'straight, straight, straight')};
+        keepRows = westward.S <= 11*egoMotion.Time(end);                % (ends when the ego does)
+        otherMotion = fcn_AnimateCar3D_fillPathMotion(westward.XY(keepRows,:), Speed=11, Instance='other', FigNum=-1);
+        extraRows = struct('instance','other', 'role','traffic', 'meshID','sample', 'color',[0.10 0.40 0.25]);
+        extraMotions = {otherMotion};
     otherwise
-        error('Unknown example ''%s''; the examples are: %s', scenarioName, strjoin({'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}, ', '));
+        error('Unknown example ''%s''; the examples are: %s', scenarioName, strjoin({'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad','raceCourse','raceCourseHills','following','passing','pedestrianCrossing','urbanGrid'}, ', '));
 end
 egoMotion = rmfield(egoMotion, {'Speed','Distance'});
+if ~exist('extraRows', 'var')
+    extraRows = struct('instance',{}, 'role',{}, 'meshID',{}, 'color',{});
+    extraMotions = {};
+end
+for ith_extra = 1:numel(extraMotions)
+    extraMotions{ith_extra} = rmfield(extraMotions{ith_extra}, intersect({'Speed','Distance'}, fieldnames(extraMotions{ith_extra}))); %#ok<AGROW>
+end
+allMotions = [{egoMotion}, extraMotions(:)'];
+startTimes = cellfun(@(m) m.Time(1), allMotions); endTimes = cellfun(@(m) m.Time(end), allMotions);
 description = exampleList(strcmp({exampleList.Name}, scenarioName)).Description;
 scenario = struct('Name',scenarioName, 'Description',description, 'RoadPreset',roadPreset, 'Seed',options.Seed, ...
-    'Road',road, 'CenterlineOptions',{centerlineOptions}, 'SceneList',fcn_AnimateCar3D_loadSceneList(egoRow, FigNum=-1), ...
-    'Motions',{{egoMotion}}, 'Duration',egoMotion.Time(end) - egoMotion.Time(1), 'MeshIDs',{{'sample'}}, ...
+    'Road',road, 'CenterlineOptions',{centerlineOptions}, 'SceneList',fcn_AnimateCar3D_loadSceneList([egoRow, extraRows], FigNum=-1), ...
+    'Motions',{allMotions}, 'Duration',max(endTimes) - min(startTimes), 'MeshIDs',{unique([{'sample'}, {extraRows.meshID}])}, ...
     'CameraPitch',fcn_INTERNAL_cameraPitch(scenarioName), 'TimeOfDay',lower(char(options.TimeOfDay)));
 
 %% Plot the results (for debugging)?

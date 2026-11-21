@@ -136,6 +136,10 @@ function playerState = fcn_AnimateCar3D_playScene(displayList, meshSet, options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playScene
+%   % * Fixed the mesh check when no objects are in view
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_playScene
 %   % * Detail levels: middle objects use a level's mesh (Level, or the level
 %   %   % made for ScreenSize); far vehicles use a level's mesh too, merged into
 %   %   % one patch (MergedPatch), with boxes and simple shapes in another;
@@ -237,7 +241,10 @@ if 0==flag_max_speed
                 error('meshSet must come from fcn_AnimateCar3D_loadMeshes');
             end
             neededIDs = unique([{displayList.Objects.MeshID}, displayList.Boxes.MeshID(:)']);
-            missingIDs = neededIDs(~isfield(meshSet, matlab.lang.makeValidName(neededIDs)));
+            missingIDs = {};
+            if ~isempty(neededIDs)            % (an empty list: no objects in view)
+                missingIDs = neededIDs(~isfield(meshSet, matlab.lang.makeValidName(neededIDs)));
+            end
             if ~isempty(missingIDs)
                 error('These meshes are not in meshSet: %s', strjoin(missingIDs,', '));
             end

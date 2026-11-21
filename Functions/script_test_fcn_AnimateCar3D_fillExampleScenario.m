@@ -89,7 +89,7 @@ fprintf(1,'Figure %.0f: %s\n',figNum, titleString);
 figure(figNum); close(figNum);
 
 exampleList = fcn_AnimateCar3D_fillExampleScenario();
-assert(isequal({exampleList.Name}, {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad'}));
+assert(isequal({exampleList.Name}, {'laneChange','curvyConstantSpeed','curvyVaryingSpeed','curvyHills','mountainRoad','raceCourse','raceCourseHills','following','passing','pedestrianCrossing','urbanGrid'}));
 printed = evalc('fcn_AnimateCar3D_fillExampleScenario()');
 assert(contains(printed, 'curvyVaryingSpeed'));
 
@@ -125,6 +125,30 @@ mountain = fcn_AnimateCar3D_fillExampleScenario('mountainRoad');
 motion = mountain.Motions{1};
 assert(strcmp(mountain.RoadPreset,'mountain') && size(motion.Pose,2)==6 && max(motion.Pose(:,3)) > 50);
 assert(strcmp(mountain.CameraPitch,'road') && strcmp(hills.CameraPitch,'none'));
+race = fcn_AnimateCar3D_fillExampleScenario('raceCourse');
+raceMotion = race.Motions{1};
+raceSpeeds = hypot(diff(raceMotion.Pose(:,1)), diff(raceMotion.Pose(:,2)))./diff(raceMotion.Time);
+% (several objects)
+following = fcn_AnimateCar3D_fillExampleScenario('following');
+assert(numel(following.Motions)==2 && strcmp(following.Motions{2}.Instance, 'lead'));
+leadAtEgoTimes = interp1(following.Motions{2}.Time, following.Motions{2}.Pose(:,1), following.Motions{1}.Time, 'linear', NaN);
+gaps = leadAtEgoTimes - following.Motions{1}.Pose(:,1);
+assert(min(gaps(~isnan(gaps))) > 8);                                                % (never closer than 8 m)
+assert(any(strcmp({following.Motions{1}.LightStates.Tail}, 'brake')));
+passing = fcn_AnimateCar3D_fillExampleScenario('passing');
+egoY = passing.Motions{1}.Pose(:,2);
+assert(max(egoY) > 1 && abs(egoY(end) - egoY(1)) < 0.05 && any([passing.Motions{1}.LightStates.TurnLeft]) && any([passing.Motions{1}.LightStates.TurnRight]));
+crossing = fcn_AnimateCar3D_fillExampleScenario('pedestrianCrossing');
+egoMotion = crossing.Motions{1}; walker = crossing.Motions{2};
+stepSpeed = hypot(diff(egoMotion.Pose(:,1)), diff(egoMotion.Pose(:,2)))./diff(egoMotion.Time);
+assert(sum(stepSpeed < 1e-6)*0.05 > 1 && strcmp(crossing.SceneList(2).Role, 'pedestrian'));   % (stops for more than 1 s)
+gridScenario = fcn_AnimateCar3D_fillExampleScenario('urbanGrid');
+egoEnd = gridScenario.Motions{1}.Pose(end,:);
+assert(isfield(gridScenario.Road,'Junctions') && egoEnd(2) > 50 && abs(egoEnd(1) - 169.2) < 1);   % (north, up the second cross street)
+assert(any([gridScenario.Motions{1}.LightStates.TurnLeft]) && gridScenario.Motions{2}.Pose(end,1) < gridScenario.Motions{2}.Pose(1,1) - 150);
+raceHills = fcn_AnimateCar3D_fillExampleScenario('raceCourseHills');
+assert(size(raceHills.Motions{1}.Pose,2)==6 && max(raceHills.Motions{1}.Pose(:,3)) - min(raceHills.Motions{1}.Pose(:,3)) > 2);
+assert(strcmp(race.RoadPreset,'raceCourse') && max(raceSpeeds) > 15 && min(raceSpeeds) < 8 && norm(raceMotion.Pose(end,1:2) - raceMotion.Pose(1,1:2)) < 1);
 nightLane = fcn_AnimateCar3D_fillExampleScenario('laneChange', TimeOfDay='night');
 assert(strcmp(nightLane.TimeOfDay,'night') && strcmp(hills.TimeOfDay,'day'));
 assert(max(abs(motion.BodyRoll)) > 6*deg2rad(4)*1.5/9.81 && max(motion.BodyPitch) > 0 && min(motion.BodyPitch) < 0);   % (exaggerated body motion)

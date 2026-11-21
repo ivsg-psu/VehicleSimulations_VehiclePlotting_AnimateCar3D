@@ -17,7 +17,8 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %           (TimeStep=seconds), (CameraSettings=settings),...
 %           (CameraFollow=instance), (ShowOptions=flag), (Caption=flag),...
 %           (GifFile=fileName), (GifDelay=seconds), (Terrain=terrain),...
-%           (CameraPitch=flag), (TimeOfDay=timeOfDay), (FigNum=figNum))
+%           (CameraPitch=flag), (CameraSwing=degrees), (SwingRange=degrees),...
+%           (SwingSeed=seed), (TimeOfDay=timeOfDay), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -55,6 +56,31 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %               road's surface, so the object's pitch shows against it
 %               (for example, cresting a hill ahead of the camera).
 %      The camera turns about the object in each case.
+%
+%      CameraSwing: a swinging kite camera: where the camera sits around
+%      the followed object, as a bearing from the object relative to its
+%      heading, in degrees (counterclockwise from above, as yaw): 180 or
+%      -180 straight behind, -90 to its right, 90 to its left, 0 ahead
+%      (looking back at it). The camera's distance, height, and look-
+%      ahead come from CameraSettings; the whole camera turns about the
+%      object to the bearing. Give:
+%           [] (default): no swing (the camera as CameraSettings sets it).
+%           a number: a fixed bearing.
+%           [from to]: swinging steadily from one bearing to the other
+%               over the scenario (for example, [-10 -170]: from ahead
+%               and to the right, around to behind and to the right).
+%           a function handle: degrees from the scenario time, @(t) ...
+%           'random': a smooth random swing within SwingRange, made from
+%               SwingSeed (the same seed, the same swing): a new bearing
+%               about every 6 s, eased between.
+%      It works with every CameraPitch: the tilt is taken along the
+%      direction the camera looks.
+%
+%      SwingRange: [lowest highest] bearings, degrees, for 'random'.
+%      Default [-170 -10] (the object's right side).
+%
+%      SwingSeed: the seed for 'random'. Default []: the scenario's Seed
+%      (or 1).
 %
 %      TimeOfDay: 'day' or 'night'. Default []: the scenario's own
 %      TimeOfDay if it has one, else 'day'. At night: a dark sky and
@@ -108,6 +134,10 @@ function playResult = fcn_AnimateCar3D_playScenario(scenario, options)
 %
 % 2026_11_20 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_playScenario
+%   % * Added CameraSwing (a swinging kite camera: fixed, [from to], @(t), or 'random' from SwingSeed within SwingRange)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_playScenario
 %   % * Added the Terrain option: the ground around roads with hills or banking;
 %   % * CameraPitch; TimeOfDay ('night': night lighting, colors, lit windows, light effects)
 
@@ -136,6 +166,9 @@ arguments
     options.GifDelay = []               % seconds per GIF frame; [] for TimeStep
     options.Terrain = 'auto'            % 'auto', a terrain (fcn_AnimateCar3D_fillTerrain), or [] for flat
     options.CameraPitch = []            % [] (the scenario's, else 'none'), false/'none', true/'vehicle', or 'road'
+    options.CameraSwing = []            % camera bearing about the object, degrees (180 behind): [], value, [from to], @(t), or 'random'
+    options.SwingRange = [-170 -10]     % degrees, for CameraSwing='random'
+    options.SwingSeed = []              % seed for 'random'; [] for the scenario's
     options.TimeOfDay = []              % 'day' or 'night'; [] for the scenario's, else 'day'
     options.FigNum = 1                  % figure to draw in; -1 for fast mode
 end
@@ -210,6 +243,14 @@ if 0==flag_max_speed
         if ~(isempty(options.CameraPitch) || (islogical(options.CameraPitch) && isscalar(options.CameraPitch)) || any(strcmp(options.CameraPitch, {'none','vehicle','road'})))
             error('CameraPitch must be false, true, ''none'', ''vehicle'', or ''road''');
         end
+        swing = options.CameraSwing;
+        if ~(isempty(swing) || isa(swing, 'function_handle') || (ischar(swing) || isstring(swing)) && strcmpi(swing, 'random') ...
+                || (isnumeric(swing) && any(numel(swing)==[1 2]) && all(isfinite(swing))))
+            error('CameraSwing must be [], a number of degrees, [from to], a function handle, or ''random''');
+        end
+        if ~(isnumeric(options.SwingRange) && numel(options.SwingRange)==2 && options.SwingRange(1) <= options.SwingRange(2))
+            error('SwingRange must be [lowest highest], degrees');
+        end
     end
 end
 
@@ -245,6 +286,9 @@ if isempty(timeOfDay)
 end
 timeOfDay = lower(char(timeOfDay));
 flagNight = strcmp(timeOfDay, 'night');
+
+%%%% How the camera swings (a bearing in degrees, as a function of time)
+swingFunction = fcn_INTERNAL_swingFunction(options.CameraSwing, options.SwingRange, options.SwingSeed, scenario);
 
 %%%% How the camera tilts
 pitchMode = options.CameraPitch;
@@ -343,7 +387,19 @@ for ith_frame = 1:numel(frameTimes)
     if ~isempty(cameraSettings) && ~isempty(followIndex)
         followState = fcn_AnimateCar3D_getObjectState(catalog, followIndex, thisTime, Detail='pose', FigNum=-1);
         if followState.Exists
-            fcn_CarMesh3D_updateCamera(cameraSettings, followState.Pose, Time=thisTime, AxesHandle=axesHandle, FigNum=-1);
+            cameraPose = followState.Pose;
+            swingTurn = 0;
+            if ~isempty(swingFunction)
+                % (turn the camera about the object to the bearing: its own
+                % bearing at heading 0, from the settings, is rigBearing)
+                if ~exist('rigBearing', 'var')
+                    rigPosition = fcn_CarMesh3D_updateCamera(cameraSettings, [0 0 0], Time=0, AxesHandle=axesHandle, FigNum=-1);
+                    rigBearing = atan2(rigPosition(2), rigPosition(1));
+                end
+                swingTurn = swingFunction(thisTime)*pi/180 - rigBearing;
+                cameraPose(end) = cameraPose(end) + swingTurn;
+            end
+            fcn_CarMesh3D_updateCamera(cameraSettings, cameraPose, Time=thisTime, AxesHandle=axesHandle, FigNum=-1);
             % (CarMesh3D's camera keeps to z = 0: raise it with the followed object)
             heightUp = [0 0 followState.Pose(3)];
             set(axesHandle, 'CameraPosition', get(axesHandle, 'CameraPosition') + heightUp, ...
@@ -351,8 +407,17 @@ for ith_frame = 1:numel(frameTimes)
             if ~strcmp(pitchMode, 'none')
                 % (turn the camera about the object by the pitch: yaw back,
                 % pitch, yaw again; positive pitch is nose down)
+                % (along the object's heading; with a swing, along the way
+                % the camera looks: the object's slope that way, from its
+                % pitch and roll)
                 yaw = followState.Pose(6);
                 pitch = followState.Pose(5);
+                if ~isempty(swingFunction)
+                    lookVector = get(axesHandle, 'CameraTarget') - get(axesHandle, 'CameraPosition');
+                    lookTurn = atan2(lookVector(2), lookVector(1)) - yaw;
+                    yaw = yaw + lookTurn;
+                    pitch = followState.Pose(5)*cos(lookTurn) - followState.Pose(4)*sin(lookTurn);
+                end
                 if strcmp(pitchMode, 'road')
                     % (the road's grade at the camera, along the heading)
                     cameraXY = get(axesHandle, 'CameraPosition');
@@ -449,6 +514,41 @@ for ith_road = 1:numel(roads)
     end
 end
 end % Ends fcn_INTERNAL_isLevel
+
+%% fcn_INTERNAL_swingFunction
+function swingFunction = fcn_INTERNAL_swingFunction(swing, swingRange, swingSeed, scenario)
+% The camera's bearing (degrees) as a function of scenario time, or []
+% for no swing. Bearings are from the object, relative to its heading:
+% 180 behind.
+startTime = 0; endTime = 1;
+if isfield(scenario, 'Motions') && ~isempty(scenario.Motions)
+    startTime = min(cellfun(@(m) m.Time(1), scenario.Motions));
+    endTime = max(cellfun(@(m) m.Time(end), scenario.Motions));
+end
+duration = max(endTime - startTime, eps);
+if isempty(swing)
+    swingFunction = [];
+elseif isa(swing, 'function_handle')
+    swingFunction = swing;
+elseif ischar(swing) || isstring(swing)
+    % (random: a new bearing about every 6 s, eased between, from the seed)
+    if isempty(swingSeed)
+        swingSeed = 1;
+        if isfield(scenario, 'Seed') && ~isempty(scenario.Seed)
+            swingSeed = scenario.Seed;
+        end
+    end
+    randomStream = RandStream('mt19937ar', 'Seed', swingSeed);
+    Nknots = max(2, ceil(duration/6) + 1);
+    knotTimes = linspace(startTime, endTime, Nknots)';
+    knotBearings = swingRange(1) + diff(swingRange)*randomStream.rand(Nknots, 1);
+    swingFunction = @(t) interp1(knotTimes, knotBearings, min(max(t, startTime), endTime), 'pchip');
+elseif isscalar(swing)
+    swingFunction = @(t) swing + 0*t;
+else
+    swingFunction = @(t) swing(1) + (swing(2) - swing(1))*min(max((t - startTime)/duration, 0), 1);
+end
+end % Ends fcn_INTERNAL_swingFunction
 
 %% fcn_INTERNAL_caption
 function fcn_INTERNAL_caption(figureHandle, scenario, thisTime, followSpeed, followName)

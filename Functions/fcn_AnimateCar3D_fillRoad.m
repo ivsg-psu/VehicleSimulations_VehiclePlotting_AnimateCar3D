@@ -72,6 +72,20 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %       in place of a few lots; and a crosswalk at the end of each block
 %       (every BlockLength meters). Houses follow BuildingSetback (their
 %       front yard) and BuildingSides.
+%   'urbanGrid': the urban street with cross streets: a main street
+%       crossed by CrossStreets (default 3) cross streets, BlockLength
+%       apart (center to center, default 100 m), each crossing a junction
+%       like the intersection's (2 lanes each way; coming in, a left-turn
+%       lane and a through-and-right lane, solid-marked over the last
+%       30 m); the main street's roads run from junction to junction,
+%       with the approach road (Length, 60 m) ending at the first and the
+%       exit road starting at the last; each cross street is two arms
+%       (Length each) pointing away from its junction. City blocks: block
+%       trees and buildings made at random (from Seed), set back
+%       BuildingSetback behind the sidewalks: tall north of the main
+%       street (on its left), low and see-through to its south. A road
+%       NETWORK (see OUTPUTS); the ego starts on the approach road's
+%       through lane, heading for the first junction.
 %   'intersection': four arms (Length each, 80 m) meeting at a junction
 %       (OpenDRIVE <junction>): on each arm, 2 lanes out and 2 lanes in
 %       (a left-turn lane, and a through and right-turn lane), or with
@@ -118,7 +132,7 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %       [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad((Preset=preset), (Length=meters),...
 %           (LaneWidth=meters), (LanesEachWay=n), (CenterMark=type),...
 %           (Start=[x y heading]), (Seed=seed), (BuildingSetback=meters),...
-%           (BuildingSides=sides), (BlockLength=meters),...
+%           (BuildingSides=sides), (BlockLength=meters), (CrossStreets=n),...
 %           (RightTurnLane=flag), (Elevation=elevation),...
 %           (MaxGrade=grade), (MaxGradeChange=gradePer100m), (ConfirmSteep=flag),...
 %           (CurveGradeRadius=meters), (MaxHeightRange=meters), (CrossSlope=crossSlope),...
@@ -129,7 +143,25 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
 %      Preset: 'twoLane' (default), 'curvy', 'mountain', 'interstate',
-%      'urbanStreet', 'neighborhood', or 'intersection'.
+%      'urbanStreet', 'urbanGrid', 'neighborhood', 'intersection', or
+%      'raceCourse'.
+%      'raceCourse' is a closed course (about 452 m) traced from a photo
+%      of a race track, scaled so its straights are two 12 ft lanes; it
+%      reads Data/raceCourse_trace.csv, _planView.csv, and _features.csv
+%      (no toolbox needed), keeps the photo's layout, and ignores the
+%      other options. Its lanes on each side: a driving lane of smooth
+%      width, an unmarked asphalt pseudo-lane out to the real edge (with
+%      the white edge line), and a red/white curb banked at 8 degrees
+%      where the photo has one; a pit lane beside the bottom straight
+%      (one 12 ft lane: wider than the photo's, about 2 m, so normal
+%      cars fit); walls 1.35 m high; pit stripes; a start line. The
+%      road has Loop = true (s wraps at Length). Its variants:
+%      Elevation='hilly' (about 4 m from lowest to highest, set by
+%      MaxHeightRange, a warning above 10 m; grades up to MaxGrade, the
+%      straights level; no easing on curves unless CurveGradeRadius is
+%      given) and CrossSlope='banked' (down to the inside of each curve,
+%      MaxCrossSlope; the bottom-rightmost curve banked the other way);
+%      the two together for hilly and banked.
 %
 %      Length: the road length, meters (straight presets). Default: the
 %      preset's.
@@ -164,8 +196,11 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %      through (NearSideAlpha, 0.3), so a camera beside and behind
 %      traffic sees through and over them.
 %
-%      BlockLength: meters between crosswalks ('neighborhood'). Default
-%      400.
+%      BlockLength: meters between crosswalks ('neighborhood', default
+%      400), or between cross streets ('urbanGrid', center to center,
+%      default 100, at least 40).
+%
+%      CrossStreets: the number of cross streets ('urbanGrid'). Default 3.
 %
 %      RightTurnLane: true for a separate right-turn lane on each arm
 %      ('intersection'). Default false.
@@ -203,11 +238,17 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 %      starting point for a vehicle (Road, LaneID, S, Direction: +1 along
 %      s, -1 against it): the first driving lane on the right, at s = 0;
 %      at the intersection, the west arm's through lane, at its far end,
-%      heading in. For 'intersection', a road network: a
+%      heading in; on the urban grid, the approach road's through lane (-2)
+%      at s = 0, heading for the first junction. For 'intersection' and
+%      'urbanGrid', a road network: a
 %      structure with ID, Name, TrafficRule, Units, Roads (the four arms,
 %      each a road as above, starting at the junction and pointing away
 %      from it: on each arm, the left lanes come in and the right lanes
-%      go out), and Junctions: ID, Type, Center, Surfaces (flat
+%      go out; on the urban grid, the main street's roads run along it,
+%      from junction to junction, so the right lanes come in at s =
+%      Length; each road there also has Predecessor and Successor, the
+%      junction at s = 0 and at s = Length, ElementType 'junction' and
+%      ElementID, or empty), and Junctions: ID, Type, Center, Surfaces (flat
 %      quadrilaterals: Corners 4 x 2, Height, Type) and CurbFaces (Ends
 %      2 x 2, Height), for the area where the arms meet, and Connections
 %      (OpenDRIVE <connection>: IncomingRoad, IncomingLane, OutgoingRoad,
@@ -242,12 +283,16 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillRoad
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillRoad
+%   % * Added the 'urbanGrid' preset: the urban street with cross streets (CrossStreets, BlockLength), a junction at each
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillRoad
-%   % * Intersections (OpenDRIVE junctions); reading and writing OpenDRIVE (.xodr) files (planned for the scene-building repository)
+%   % * Reading and writing OpenDRIVE (.xodr) files (planned for the scene-building repository); a full grid (parallel main streets)
 
 
 
@@ -258,7 +303,7 @@ function [road, centerlineOptions] = fcn_AnimateCar3D_fillRoad(options)
 % the MATLABFLAG_ANIMATECAR3D_FLAG_CHECK_INPUTS environment variable.
 arguments
 
-    options.Preset = 'twoLane'      % 'twoLane', 'curvy', 'interstate', 'urbanStreet'
+    options.Preset = 'twoLane'      % 'twoLane', 'curvy', 'mountain', 'interstate', 'urbanStreet', 'urbanGrid', 'neighborhood', 'intersection', 'raceCourse'
     options.Length = []             % meters (straight presets)
     options.LaneWidth = 3.6         % meters
     options.LanesEachWay = 4        % driving lanes each way ('interstate')
@@ -267,13 +312,14 @@ arguments
     options.Seed = 1                % random seed: the same Seed, the same scene
     options.BuildingSetback = 6     % meters behind the sidewalk ('urbanStreet')
     options.BuildingSides = ''      % 'both', 'left', 'right', 'none'; '' for the preset's
-    options.BlockLength = 400       % meters between crosswalks ('neighborhood')
+    options.BlockLength = []        % meters between crosswalks ('neighborhood', 400) or cross streets ('urbanGrid', 100)
+    options.CrossStreets = 3        % cross streets ('urbanGrid')
     options.RightTurnLane = false   % separate right-turn lanes ('intersection')
     options.Elevation = ''          % 'flat', 'hilly', or 'mountain'; '' for the preset's
     options.MaxGrade = []           % rise over run ('hilly'); [] for the preset's (0.12 'mountain', else 0.06)
     options.MaxGradeChange = 0.35   % grade change per 100 m, as a fraction ('hilly'): about 20 degrees
     options.ConfirmSteep = false    % ask before a MaxGradeChange above 0.5
-    options.CurveGradeRadius = 150  % meters: the grade eases on curves tighter than this; 0 for none
+    options.CurveGradeRadius = []   % meters: the grade eases on curves tighter than this; 0 for none; [] for 150 (race course: 0)
     options.MaxHeightRange = Inf    % meters, lowest to highest ('hilly'); Inf for no cap
     options.CrossSlope = ''         % 'none' or 'banked'; '' for the preset's
     options.MaxCrossSlope = 0.06    % rise over run ('banked')
@@ -330,7 +376,7 @@ if 0==flag_max_speed
 
 
         % Check the choices
-        presetNames = {'twoLane','curvy','mountain','interstate','urbanStreet','neighborhood','intersection'};
+        presetNames = {'twoLane','curvy','mountain','interstate','urbanStreet','urbanGrid','neighborhood','intersection','raceCourse'};
         if ~any(strcmpi(options.Preset, presetNames))
             error('Preset must be one of: %s', strjoin(presetNames, ', '));
         end
@@ -359,7 +405,10 @@ if 0==flag_max_speed
         if ~isempty(options.CrossSlope) && ~any(strcmpi(options.CrossSlope, {'none','banked'}))
             error('CrossSlope must be ''none'' or ''banked''');
         end
-        heightNames = {'MaxGradeChange','MaxHeightRange','MaxCrossSlope','CurveGradeRadius'};
+        heightNames = {'MaxGradeChange','MaxHeightRange','MaxCrossSlope'};
+        if ~isempty(options.CurveGradeRadius) && ~(isnumeric(options.CurveGradeRadius) && isscalar(options.CurveGradeRadius) && options.CurveGradeRadius >= 0)
+            error('CurveGradeRadius must be a number, 0 or more, or []');
+        end
         if ~isempty(options.MaxGrade) && ~(isnumeric(options.MaxGrade) && isscalar(options.MaxGrade) && options.MaxGrade >= 0)
             error('MaxGrade must be a number, 0 or more');
         end
@@ -383,8 +432,14 @@ if 0==flag_max_speed
         if ~(isnumeric(options.Seed) && isscalar(options.Seed) && options.Seed >= 0 && options.Seed==round(options.Seed))
             error('Seed must be a whole number, 0 or more');
         end
-        if ~(isnumeric(options.BlockLength) && isscalar(options.BlockLength) && options.BlockLength > 0)
+        if ~isempty(options.BlockLength) && ~(isnumeric(options.BlockLength) && isscalar(options.BlockLength) && options.BlockLength > 0)
             error('BlockLength must be a positive number of meters');
+        end
+        if strcmpi(options.Preset, 'urbanGrid') && ~isempty(options.BlockLength) && options.BlockLength < 40
+            error('BlockLength must be at least 40 m on the urban grid');
+        end
+        if ~(isnumeric(options.CrossStreets) && isscalar(options.CrossStreets) && options.CrossStreets >= 1 && options.CrossStreets==round(options.CrossStreets))
+            error('CrossStreets must be a whole number, 1 or more');
         end
         if ~(isnumeric(options.BuildingSetback) && isscalar(options.BuildingSetback) && options.BuildingSetback >= 0)
             error('BuildingSetback must be a number of meters, 0 or more');
@@ -425,6 +480,12 @@ laneWidth = options.LaneWidth;
 if strcmp(presetName, 'intersection')
     % A road network: four arms and a junction
     road = fcn_INTERNAL_intersection(options, laneWidth);
+elseif strcmp(presetName, 'urbangrid')
+    % A road network: a main street and cross streets, a junction at each
+    road = fcn_INTERNAL_urbanGrid(options, laneWidth);
+elseif strcmp(presetName, 'racecourse')
+    % A closed race course, traced from a photo (Data/raceCourse_*.csv)
+    road = fcn_INTERNAL_raceCourse(options);
 else
     road = struct('ID','1', 'Name',char(options.Preset), 'TrafficRule','RHT', 'Units','meters, radians', ...
         'Length',0, 'PlanView',[], 'LaneSections',[], 'Objects',fcn_INTERNAL_object('', '', 0, 0, 0, 0, 0, 0));
@@ -518,11 +579,11 @@ else
     end
     if strcmpi(elevationChoice, 'mountain')
         road.ElevationProfile = fcn_INTERNAL_hillyProfile(road.Length, options.Seed, maxGrade, options.MaxGradeChange, ...
-            options.MaxHeightRange, zeros(0,2), 'mountain', planView, options.CurveGradeRadius);
+            options.MaxHeightRange, zeros(0,2), 'mountain', planView, fcn_INTERNAL_pick(options.CurveGradeRadius, 150));
     end
     if strcmpi(elevationChoice, 'hilly')
         road.ElevationProfile = fcn_INTERNAL_hillyProfile(road.Length, options.Seed, maxGrade, options.MaxGradeChange, ...
-            options.MaxHeightRange, zeros(0,2), 'hilly', planView, options.CurveGradeRadius);
+            options.MaxHeightRange, zeros(0,2), 'hilly', planView, fcn_INTERNAL_pick(options.CurveGradeRadius, 150));
     end
     if strcmpi(crossSlopeChoice, 'banked')
         road.LateralProfile.Superelevation = fcn_INTERNAL_bankedProfile(planView, options.MaxCrossSlope);
@@ -549,7 +610,7 @@ else
             road.Objects = [road.Objects, fcn_INTERNAL_pedestrians(road.Length, [-1 1]*(curbT + 1.9), 0.3, 12, 0.3, options.Seed)];
         case 'neighborhood'
             road.Objects = fcn_INTERNAL_neighborhoodObjects(road, laneWidth, options.Seed, options.BuildingSetback, ...
-                lower(char(fcn_INTERNAL_pick(options.BuildingSides, 'left'))), options.BlockLength);
+                lower(char(fcn_INTERNAL_pick(options.BuildingSides, 'left'))), fcn_INTERNAL_pick(options.BlockLength, 400));
             curbT = laneWidth + 0.15;
             road.Objects = [road.Objects, fcn_INTERNAL_pedestrians(road.Length, [-1 1]*(curbT + 1.5 + 0.75), 0.3, 25, 0.2, options.Seed)];
     end
@@ -603,6 +664,302 @@ end % Ends main function
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% fcn_INTERNAL_raceCourse
+function road = fcn_INTERNAL_raceCourse(options)
+% The race course traced from a photo (see Data/README_raceCourse.md):
+% Data/raceCourse_trace.csv has the centerline every 0.25 m from the
+% start line (s, x, y), the track's half-widths to each edge, and the
+% curb widths; Data/raceCourse_planView.csv has the reference line as
+% lines and arcs; Data/raceCourse_features.csv has the walls and the pit
+% stripes as world polylines. The course keeps the photo's layout (north
+% up); the start is at the origin, heading west on the bottom straight.
+dataFolder = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Data');
+trace = readmatrix(fullfile(dataFolder, 'raceCourse_trace.csv'), 'NumHeaderLines', 1);
+features = readcell(fullfile(dataFolder, 'raceCourse_features.csv'), 'NumHeaderLines', 1);
+laneWidth = 12*0.3048;                                   % (the straights: two 12 ft lanes)
+
+%%%% The reference line: lines and arcs every 2 m (Data/raceCourse_planView.csv:
+%%%% curvature from the trace's headings, corrected a little on each
+%%%% winding half so the straights are exactly straight and the loop
+%%%% closes; within 0.3 m of the trace)
+planRows = readmatrix(fullfile(dataFolder, 'raceCourse_planView.csv'), 'NumHeaderLines', 1);   % s x y heading length curvature
+Ngeometry = size(planRows,1);
+planView = repmat(struct('S',0, 'X',0, 'Y',0, 'Hdg',0, 'Length',0, 'Type','line', 'Curvature',[], ...
+    'CurvStart',[], 'CurvEnd',[]), Ngeometry, 1);
+for ith_geometry = 1:Ngeometry
+    thisRow = planRows(ith_geometry,:);
+    planView(ith_geometry) = struct('S',thisRow(1), 'X',thisRow(2), 'Y',thisRow(3), 'Hdg',thisRow(4), 'Length',thisRow(5), ...
+        'Type','line', 'Curvature',[], 'CurvStart',[], 'CurvEnd',[]);
+    if abs(thisRow(6)) > 1e-9
+        planView(ith_geometry).Type = 'arc';
+        planView(ith_geometry).Curvature = thisRow(6);
+    end
+end
+sNow = planRows(end,1) + planRows(end,5);
+road = struct('ID','1', 'Name','raceCourse', 'TrafficRule','RHT', 'Units','meters, radians', ...
+    'Length',sNow, 'PlanView',planView, 'LaneSections',[], 'Objects',fcn_INTERNAL_object('', '', 0, 0, 0, 0, 0, 0));
+road.Objects(1) = [];
+road.ElevationProfile = fcn_INTERNAL_flatCubics(0);
+road.LateralProfile = struct('Superelevation', fcn_INTERNAL_flatCubics(0));
+
+%%%% Each trace row's s on the reference line (the trace's s, scaled to
+%%%% the reference line's length)
+traceLength = trace(end,1) + norm(trace(end,2:3) - trace(1,2:3));
+rowS = trace(:,1)*sNow/traceLength;
+
+%%%% Widths along s: the driving lanes smooth (a 15 m moving average,
+%%%% never past the edge), an unmarked asphalt pseudo-lane out to the real
+%%%% edge, the curbs, and the pit lane (one 12 ft lane beside the bottom
+%%%% straight, between the pit stripes, tapering in over 6 m at each end)
+edgeLeft = trace(:,4); edgeRight = trace(:,5);
+% (the straights: where the trace is exactly level for 10 m or more; two
+% 12 ft lanes each)
+flagLevelRow = [abs(diff(trace(:,3))) < 1e-9; abs(trace(1,3) - trace(end,3)) < 1e-9];
+runStarts = find(diff([0; flagLevelRow])==1); runEnds = find(diff([flagLevelRow; 0])==-1);
+flagStraight = false(size(flagLevelRow));
+for ith_run = 1:numel(runStarts)
+    if runEnds(ith_run) - runStarts(ith_run) >= 40
+        flagStraight(runStarts(ith_run):runEnds(ith_run)) = true;
+    end
+end
+flagStraight(1) = flagStraight(end) || flagStraight(1);
+edgeLeft(flagStraight) = laneWidth; edgeRight(flagStraight) = laneWidth;
+driveLeft = min(edgeLeft, fcn_INTERNAL_loopMean(edgeLeft, 61));
+driveRight = min(edgeRight, fcn_INTERNAL_loopMean(edgeRight, 61));
+widths = struct('driveLeft',driveLeft, 'driveRight',driveRight, 'pseudoLeft',edgeLeft - driveLeft, ...
+    'pseudoRight',edgeRight - driveRight, 'curbLeft',trace(:,6), 'curbRight',trace(:,7));
+stripes = features(strcmp(features(:,2), 'stripe'), :);
+stripeX = cell2mat(stripes(:,3));
+pitX = [min(stripeX) max(stripeX)];                       % (the bottom straight runs west from the start, along -x)
+pitS = sort(mod(-pitX, sNow));                            % [exit, entry]: the pit wraps past the start line
+rowsPit = rowS <= pitS(1) | rowS >= pitS(2);
+toEnds = min(mod(pitS(1) - rowS, sNow), mod(rowS - pitS(2), sNow));
+widths.pit = rowsPit.*laneWidth.*min(1, toEnds/6);
+names = fieldnames(widths);
+for ith_name = 1:numel(names)
+    widths.(names{ith_name}) = fcn_INTERNAL_loopMean(widths.(names{ith_name}), 9);   % (2 m: smooth joins, and slopes)
+end
+flagTopStraight = flagStraight & trace(:,3) > 10;
+
+%%%% Lane sections every 5 m: each lane's width a cubic through the
+%%%% widths and slopes at the section's ends (so the widths join smoothly)
+sectionStarts = (0:5:sNow - 2.5)';
+sectionEnds = [sectionStarts(2:end); sNow];
+curbBank = tan(8*pi/180);
+white = 'standard';
+for ith_section = 1:numel(sectionStarts)
+    s0 = sectionStarts(ith_section); s1 = sectionEnds(ith_section);
+    cubic = @(name) fcn_INTERNAL_hermite(rowS, widths.(name), s0, s1, sNow);
+    sides = struct();
+    for side = [-1 1]
+        if side < 0
+            suffix = 'Right';
+        else
+            suffix = 'Left';
+        end
+        curbCubic = cubic(['curb' suffix]);
+        curbMean = max(0, mean(polyval(fliplr(curbCubic), linspace(0, s1 - s0, 6))));
+        lanes = [fcn_INTERNAL_lane(side*1, 'driving', 0, 0, 'none', white); ...
+                 fcn_INTERNAL_lane(side*2, 'shoulder', 0, 0, 'solid', white); ...
+                 fcn_INTERNAL_lane(side*3, 'curb', 0, 0, 'none', white)];
+        lanes(1).Width = cubic(['drive' suffix]);
+        lanes(2).Width = cubic(['pseudo' suffix]);
+        lanes(3).Width = curbCubic;
+        lanes(3).Height = [0 curbMean*curbBank];              % (banked up and away from the track, 8 degrees)
+        if side > 0 && any(rowsPit(rowS >= s0 & rowS < s1))
+            lanes(4,1) = fcn_INTERNAL_lane(4, 'driving', 0, 0, 'solid', white);
+            lanes(4).Width = cubic('pit');
+        end
+        sides.(suffix) = lanes;
+    end
+    centerMark = 'none';
+    if any(flagTopStraight(rowS >= s0 & rowS < s1))
+        centerMark = 'broken';
+    end
+    centerLane = fcn_INTERNAL_lane(0, 'none', 0, 0, centerMark, white);
+    road.LaneSections(ith_section,1).S = s0;
+    road.LaneSections(ith_section,1).Left = sides.Left;
+    road.LaneSections(ith_section,1).Center = centerLane;
+    road.LaneSections(ith_section,1).Right = sides.Right;
+end
+
+%%%% Objects: the walls (1.35 m, as in the photo's red/white dashed lines),
+%%%% the pit stripes, and the start line, each with an outline in the
+%%%% road's local frame at its S and T (OpenDRIVE <outline> cornerLocal)
+wallIDs = unique(cell2mat(features(strcmp(features(:,2), 'wall'), 1)));
+for ith_wall = wallIDs'
+    rows = strcmp(features(:,2), 'wall') & cell2mat(features(:,1))==ith_wall;
+    road.Objects(end+1) = fcn_INTERNAL_outlined(road, 'wall', sprintf('wall %d', ith_wall), ...
+        cell2mat(features(rows, 3:4)), 0.25, 1.35);
+end
+for ith_stripe = unique(cell2mat(stripes(:,1)))'
+    rows = cell2mat(stripes(:,1))==ith_stripe;
+    road.Objects(end+1) = fcn_INTERNAL_outlined(road, 'stripe', sprintf('pit stripe %d', ith_stripe), ...
+        cell2mat(stripes(rows, 3:4)), 0.30, 0);
+end
+startLine = fcn_INTERNAL_object('stripe', 'start line', 0, 0, 0.3, 2*laneWidth, 0, 0);
+startLine.Outline = [-0.15 -laneWidth; 0.15 -laneWidth; 0.15 laneWidth; -0.15 laneWidth];
+road.Objects(end+1) = startLine;
+for ith_object = 1:numel(road.Objects)
+    road.Objects(ith_object).ID = ith_object;
+end
+
+%%%% Heights (the race course variants): 'hilly' (about 4 m, never more
+%%%% than 10 m from lowest to highest by default; grades up to MaxGrade,
+%%%% the straights level; the loop's heights close), and 'banked' (down
+%%%% to the inside of each curve, MaxCrossSlope; the bottom-rightmost
+%%%% curve the other way)
+if strcmpi(fcn_INTERNAL_pick(options.Elevation, 'flat'), 'hilly')
+    road.ElevationProfile = fcn_INTERNAL_raceHills(road, rowS(flagStraight), options);
+end
+if strcmpi(fcn_INTERNAL_pick(options.CrossSlope, 'none'), 'banked')
+    road.LateralProfile.Superelevation = fcn_INTERNAL_raceBanking(road, options.MaxCrossSlope);
+end
+
+road.Loop = true;                                         % (a closed course: s wraps at Length)
+road.SampleSpacing = 0.5;
+road.TreesPerHectare = 0;                                 % (no trees around a race course)
+road.TerrainGridSpacing = 1;                              % (fcn_AnimateCar3D_fillTerrain: fine ground between close track parts)
+road.TerrainMargin = 30;                                 % (tight curves: fcn_AnimateCar3D_plotRoad samples every 0.5 m)
+road.Colors = struct('shoulder', [0.33 0.33 0.34]);       % (the pseudo-lanes: plain asphalt)
+road.EgoStart = struct('Road',road.ID, 'LaneID',-1, 'S',0, 'Direction',1);
+end % Ends fcn_INTERNAL_raceCourse
+
+%% fcn_INTERNAL_raceHills
+function records = fcn_INTERNAL_raceHills(road, straightS, options)
+% Hills for the race course: fcn_INTERNAL_hillyProfile with the straights
+% held level (no easing on curves unless CurveGradeRadius is given:
+% the whole course is curves), then closed (the height back to 0 at the
+% end, by a correction that is zero on the straights) and capped at
+% MaxHeightRange (default 4 m here; above 10 m a warning)
+L = road.Length;
+maxRange = options.MaxHeightRange;
+if isinf(maxRange)
+    maxRange = 4;
+end
+if maxRange > 10
+    warning('AnimateCar3D:fillRoad:raceHills', 'MaxHeightRange %.1f m is more than the 10 m asked for the race course.', maxRange);
+end
+% (the straights' s-ranges, as rows of [sFrom sTo])
+straightS = sort(straightS(:));
+breaks = find(diff(straightS) > 1);
+flatRanges = [straightS([1; breaks+1]), straightS([breaks; end])];
+curveRadius = options.CurveGradeRadius;
+if isempty(curveRadius)
+    curveRadius = 0;
+end
+raw = fcn_INTERNAL_hillyProfile(L, options.Seed, fcn_INTERNAL_pick(options.MaxGrade, 0.06), options.MaxGradeChange, ...
+    Inf, flatRanges, 'hilly', road.PlanView, curveRadius);
+grid = unique([(0:0.5:L)'; L]);
+z = fcn_INTERNAL_cubicValues(raw, grid);
+offStraight = true(size(grid));
+for ith_range = 1:size(flatRanges,1)
+    offStraight(grid >= flatRanges(ith_range,1) - 0.5 & grid <= flatRanges(ith_range,2) + 0.5) = false;
+end
+closing = cumsum(double(offStraight))/max(sum(offStraight), 1);
+z = z - z(end)*closing;                                   % (back to 0 at the end; level where it was level)
+span = max(z) - min(z);
+if span > maxRange
+    z = z*maxRange/span;
+end
+% (cubic pieces every 2 m through the heights and their slopes)
+knots = (0:2:L)';
+if knots(end) < L
+    knots = [knots; L];
+end
+zKnots = interp1(grid, z, knots);
+slope = gradient(z, grid);
+dKnots = interp1(grid, slope, knots);
+records = repmat(fcn_INTERNAL_flatCubics(0), numel(knots)-1, 1);
+for ith_piece = 1:numel(knots)-1
+    h = knots(ith_piece+1) - knots(ith_piece);
+    z0 = zKnots(ith_piece); z1 = zKnots(ith_piece+1); d0 = dKnots(ith_piece); d1 = dKnots(ith_piece+1);
+    records(ith_piece) = struct('S',knots(ith_piece), 'A',z0, 'B',d0, 'C',(3*(z1 - z0)/h - 2*d0 - d1)/h, 'D',(2*(z0 - z1)/h + d0 + d1)/h^2);
+end
+end % Ends fcn_INTERNAL_raceHills
+
+%% fcn_INTERNAL_raceBanking
+function records = fcn_INTERNAL_raceBanking(road, maxCrossSlope)
+% Banking for the race course: down to the inside of each curve, the full
+% maxCrossSlope on curves tighter than 20 m radius (less on gentler ones),
+% ramped over about 10 m; the bottom-rightmost curve banked the other way
+planView = road.PlanView;
+N = numel(planView);
+curvature = zeros(N,1);
+for ith_geometry = 1:N
+    if strcmp(planView(ith_geometry).Type, 'arc')
+        curvature(ith_geometry) = planView(ith_geometry).Curvature;
+    end
+end
+smoothCurvature = movmean([curvature(end-2:end); curvature; curvature(1:3)], 5);
+smoothCurvature = smoothCurvature(4:end-3);
+roll = -sign(smoothCurvature).*atan(maxCrossSlope).*min(1, abs(smoothCurvature)*20);
+% (the bottom-rightmost curve: of the runs of one turning direction, the
+% one whose middle is farthest right and down)
+flagCurve = abs(smoothCurvature) > 1/40;
+turnSign = sign(smoothCurvature).*flagCurve;
+runStarts = find(turnSign ~= 0 & [true; diff(turnSign) ~= 0]);
+bestScore = -Inf; bestRun = [];
+for ith_run = 1:numel(runStarts)
+    runEnd = runStarts(ith_run);
+    while runEnd < N && turnSign(runEnd+1)==turnSign(runStarts(ith_run))
+        runEnd = runEnd + 1;
+    end
+    middle = round((runStarts(ith_run) + runEnd)/2);
+    score = planView(middle).X - planView(middle).Y;
+    if score > bestScore
+        bestScore = score; bestRun = runStarts(ith_run):runEnd;
+    end
+end
+flip = zeros(N,1); flip(bestRun) = 1;
+flip = movmean([flip(end-2:end); flip; flip(1:3)], 5); flip = flip(4:end-3);
+roll = roll.*(1 - 2*flip);
+roll = movmean([roll(end-2:end); roll; roll(1:3)], 5); roll = roll(4:end-3);   % (about 10 m ramps)
+rollNext = [roll(2:end); roll(1)];
+records = repmat(fcn_INTERNAL_flatCubics(0), N, 1);
+for ith_geometry = 1:N
+    records(ith_geometry) = struct('S',planView(ith_geometry).S, 'A',roll(ith_geometry), ...
+        'B',(rollNext(ith_geometry) - roll(ith_geometry))/planView(ith_geometry).Length, 'C',0, 'D',0);
+end
+end % Ends fcn_INTERNAL_raceBanking
+
+%% fcn_INTERNAL_loopMean
+function values = fcn_INTERNAL_loopMean(values, windowRows)
+% A moving average around a closed loop
+half = floor(windowRows/2);
+padded = [values(end-half+1:end); values; values(1:half)];
+values = movmean(padded, windowRows);
+values = values(half+1:end-half);
+end % Ends fcn_INTERNAL_loopMean
+
+%% fcn_INTERNAL_hermite
+function coefficients = fcn_INTERNAL_hermite(rowS, values, s0, s1, loopLength)
+% Cubic [a b c d] in (s - s0) through the values and slopes at s0 and s1
+% (from the samples, around the loop)
+wrappedS = [rowS - loopLength; rowS; rowS + loopLength];
+wrappedV = [values; values; values];
+h = 0.5;
+v0 = interp1(wrappedS, wrappedV, s0); v1 = interp1(wrappedS, wrappedV, s1);
+d0 = (interp1(wrappedS, wrappedV, s0 + h) - interp1(wrappedS, wrappedV, s0 - h))/(2*h);
+d1 = (interp1(wrappedS, wrappedV, s1 + h) - interp1(wrappedS, wrappedV, s1 - h))/(2*h);
+L = s1 - s0;
+coefficients = [v0, d0, (3*(v1 - v0)/L - 2*d0 - d1)/L, (2*(v0 - v1)/L + d0 + d1)/L^2];
+end % Ends fcn_INTERNAL_hermite
+
+%% fcn_INTERNAL_outlined
+function object = fcn_INTERNAL_outlined(road, objectType, objectName, polyline, thickness, objectHeight)
+% An object with an outline: anchored at the road point nearest the
+% polyline's first vertex; the outline in that point's frame (u along the
+% road's heading, v to its left)
+[~, anchorS, anchorT] = fcn_AnimateCar3D_getRoadHeight(road, polyline(1,:), FigNum=-1);
+anchor = fcn_AnimateCar3D_getRoadPoints(road, anchorS, T=anchorT, FigNum=-1);
+relative = polyline - anchor(1:2);
+outline = [relative(:,1)*cos(anchor(3)) + relative(:,2)*sin(anchor(3)), ...
+          -relative(:,1)*sin(anchor(3)) + relative(:,2)*cos(anchor(3))];
+object = fcn_INTERNAL_object(objectType, objectName, anchorS, anchorT, 0, thickness, objectHeight, 0);
+object.Outline = outline;
+end % Ends fcn_INTERNAL_outlined
 
 %% fcn_INTERNAL_pick
 function value = fcn_INTERNAL_pick(given, defaultValue)
@@ -662,7 +1019,7 @@ function object = fcn_INTERNAL_object(objectType, objectName, sStart, tCenter, o
 % One road object (OpenDRIVE <object>): placed at s (its start along the
 % road) and t (its center across)
 object = struct('ID',objectID, 'Type',objectType, 'Name',objectName, 'S',sStart, 'T',tCenter, 'ZOffset',0, ...
-    'Length',objectLength, 'Width',objectWidth, 'Height',objectHeight, 'Hdg',0, 'Repeat',false, 'Color',[]);
+    'Length',objectLength, 'Width',objectWidth, 'Height',objectHeight, 'Hdg',0, 'Repeat',false, 'Color',[], 'Outline',[]);
 end % Ends fcn_INTERNAL_object
 
 %% fcn_INTERNAL_flatCubics
@@ -1059,6 +1416,281 @@ network = struct('ID','intersection', 'Name','intersection', 'TrafficRule','RHT'
     'Roads',roads, 'Junctions',junction, ...
     'EgoStart',struct('Road','3', 'LaneID',2, 'S',armLength, 'Direction',-1));
 end % Ends fcn_INTERNAL_intersection
+
+%% fcn_INTERNAL_urbanGrid
+function network = fcn_INTERNAL_urbanGrid(options, laneWidth)
+% A main street (heading Start(3)) crossed by CrossStreets cross streets,
+% BlockLength apart: a junction at each crossing, built as the
+% intersection's (2 lanes each way); the main street's roads run from
+% junction to junction (the approach road ends at the first, the exit
+% road starts at the last), and each cross street is two arms pointing
+% away from its junction; city blocks of trees and buildings between
+Njunctions = options.CrossStreets;
+blockLength = fcn_INTERNAL_pick(options.BlockLength, 100);
+armLength = fcn_INTERNAL_pick(options.Length, 60);
+Nlanes = 2;                                % (each way)
+halfSize = Nlanes*laneWidth;               % the junction's half-size
+markLength = 30;                           % (solid lane line before each junction)
+white = 'standard';
+heading = options.Start(3);
+along = [cos(heading) sin(heading)];
+across = [-sin(heading) cos(heading)];     % (north: the main street's left)
+centers = options.Start(1:2) + (armLength + halfSize + (0:Njunctions-1)'*blockLength)*along;
+
+% The roads: approach, links, exit (along the main street), then the
+% cross streets' arms (north, then south, at each junction). For each:
+% start point, heading, length, and the junction at each end
+starts = [options.Start(1:2); centers + halfSize*along];
+headings = heading*ones(Njunctions+1, 1);
+lengths = [armLength; (blockLength - 2*halfSize)*ones(Njunctions-1, 1); armLength];
+fromJunction = [0, 1:Njunctions];
+toJunction = [1:Njunctions, 0];
+names = [{'approach'}, arrayfun(@(j) sprintf('main street, block %d', j), 1:Njunctions-1, 'UniformOutput', false), {'exit'}];
+for ith_junction = 1:Njunctions
+    for side = [1 -1]
+        starts(end+1,:) = centers(ith_junction,:) + side*halfSize*across; %#ok<AGROW>
+        headings(end+1,1) = heading + side*pi/2; %#ok<AGROW>
+        lengths(end+1,1) = armLength; %#ok<AGROW>
+        fromJunction(end+1) = ith_junction; %#ok<AGROW>
+        toJunction(end+1) = 0; %#ok<AGROW>
+        if side > 0
+            names{end+1} = sprintf('cross street %d, north', ith_junction); %#ok<AGROW>
+        else
+            names{end+1} = sprintf('cross street %d, south', ith_junction); %#ok<AGROW>
+        end
+    end
+end
+Nroads = numel(lengths);
+
+% Lanes: as the intersection's arms (2 driving lanes each way, curb,
+% sidewalk, grass); the lane line between a side's two lanes is solid
+% over the last markLength meters before a junction, broken elsewhere
+centerLane = fcn_INTERNAL_lane(0, 'none', 0, 0, 'solid solid', 'yellow');
+laneSet = @(rightMark, leftMark) deal( ...
+    [fcn_INTERNAL_lane(-1, 'driving', laneWidth, 0, rightMark, white); ...
+     fcn_INTERNAL_lane(-2, 'driving', laneWidth, 0, 'none', white); ...
+     fcn_INTERNAL_lane(-3, 'curb', 0.15, 0.15, 'none', white); ...
+     fcn_INTERNAL_lane(-4, 'walking', 2.5, 0.15, 'none', white); ...
+     fcn_INTERNAL_lane(-5, 'border', 1.5, 0.15, 'none', white)], ...
+    [fcn_INTERNAL_lane(1, 'driving', laneWidth, 0, leftMark, white); ...
+     fcn_INTERNAL_lane(2, 'driving', laneWidth, 0, 'none', white); ...
+     fcn_INTERNAL_lane(3, 'curb', 0.15, 0.15, 'none', white); ...
+     fcn_INTERNAL_lane(4, 'walking', 2.5, 0.15, 'none', white); ...
+     fcn_INTERNAL_lane(5, 'border', 1.5, 0.15, 'none', white)]);
+noLink = struct('ElementType','', 'ElementID','');
+for ith_road = 1:Nroads
+    roadLength = lengths(ith_road);
+    % (lane sections: where each side's traffic comes in to a junction)
+    flagInAtStart = fromJunction(ith_road) > 0;       % (left lanes come in at s = 0)
+    flagInAtEnd = toJunction(ith_road) > 0;           % (right lanes come in at s = Length)
+    breaks = 0;
+    if flagInAtStart
+        breaks(end+1) = min(markLength, roadLength/2); %#ok<AGROW>
+    end
+    if flagInAtEnd
+        breaks(end+1) = max(roadLength - markLength, roadLength/2); %#ok<AGROW>
+    end
+    breaks = unique(breaks);
+    sections = struct('S',{}, 'Left',{}, 'Center',{}, 'Right',{});
+    for ith_section = 1:numel(breaks)
+        nextBreaks = [breaks(ith_section+1:end), roadLength];
+        sectionMid = (breaks(ith_section) + nextBreaks(1))/2;
+        rightMark = 'broken'; leftMark = 'broken';
+        if flagInAtEnd && sectionMid > roadLength - markLength
+            rightMark = 'solid';
+        end
+        if flagInAtStart && sectionMid < markLength
+            leftMark = 'solid';
+        end
+        [rightLanes, leftLanes] = laneSet(rightMark, leftMark);
+        sections(end+1) = struct('S',breaks(ith_section), 'Left',{leftLanes}, 'Center',centerLane, 'Right',{rightLanes}); %#ok<AGROW>
+    end
+    predecessor = noLink; successor = noLink;
+    if flagInAtStart
+        predecessor = struct('ElementType','junction', 'ElementID',sprintf('%d', fromJunction(ith_road)));
+    end
+    if flagInAtEnd
+        successor = struct('ElementType','junction', 'ElementID',sprintf('%d', toJunction(ith_road)));
+    end
+    thisRoad = struct('ID',sprintf('%d', ith_road), 'Name',names{ith_road}, 'TrafficRule','RHT', ...
+        'Units','meters, radians', 'Length',roadLength, ...
+        'PlanView',fcn_INTERNAL_planView(fcn_INTERNAL_segment('line', roadLength, 0, 0), [starts(ith_road,:) headings(ith_road)]), ...
+        'LaneSections',sections, 'Objects',[], 'Junction','-1', 'Predecessor',predecessor, 'Successor',successor);
+    thisRoad.Objects = fcn_INTERNAL_gridObjects(thisRoad, laneWidth, Nlanes, flagInAtStart, flagInAtEnd, ...
+        ith_road > Njunctions + 1, options, ith_road, across);
+    roads(ith_road) = thisRoad; %#ok<AGROW>
+end
+
+% The junctions: an asphalt square, a square of sidewalk at each corner
+% (joining the arms' sidewalks), and the connections from each lane
+% coming in to the lanes it may go to
+toWorld = @(center, uv) center + uv(:,1)*along + uv(:,2)*across;
+squareCorners = [-1 -1; 1 -1; 1 1; -1 1]*halfSize;
+cornerSquare = [0 0; 1 0; 1 1; 0 1]*2.65;
+headingError = @(a) atan2(sin(a), cos(a));
+for ith_junction = 1:Njunctions
+    center = centers(ith_junction,:);
+    junction = struct('ID',sprintf('%d', ith_junction), 'Type','default', 'Center',center, ...
+        'Surfaces',struct('Corners',toWorld(center, squareCorners), 'Height',0, 'Type','driving'), ...
+        'CurbFaces',struct('Ends',{}, 'Height',{}), 'Connections',[]);
+    for cornerSigns = [1 1; -1 1; -1 -1; 1 -1]'
+        uv = halfSize*cornerSigns' + cornerSquare.*cornerSigns';
+        junction.Surfaces(end+1) = struct('Corners',toWorld(center, uv), 'Height',0.15, 'Type','walking');
+    end
+    % (the legs: each road end at this junction, with the direction
+    % pointing away from the junction along it)
+    legRoads = [find(fromJunction==ith_junction), find(toJunction==ith_junction)];
+    legAtStart = [true(1, sum(fromJunction==ith_junction)), false(1, sum(toJunction==ith_junction))];
+    legAngles = headings(legRoads)' + pi*~legAtStart;
+    connections = struct('ID',{}, 'IncomingRoad',{}, 'IncomingLane',{}, 'OutgoingRoad',{}, 'OutgoingLane',{}, ...
+        'Turn',{}, 'Path',{});
+    for ith_leg = 1:numel(legRoads)
+        inRoad = roads(legRoads(ith_leg));
+        for ith_lane = 1:Nlanes
+            if ith_lane==1
+                turns = {'left'};
+            else
+                turns = {'straight','right'};
+            end
+            for thisTurn = turns
+                turnAngle = pi/2*(strcmp(thisTurn{1},'left') - strcmp(thisTurn{1},'right'));
+                relative = headingError(legAngles - (legAngles(ith_leg) + pi) - turnAngle);
+                outLeg = find(abs(relative) < 0.1, 1);
+                if isempty(outLeg)
+                    continue;
+                end
+                outRoad = roads(legRoads(outLeg));
+                outIndex = ith_lane;
+                if strcmp(thisTurn{1}, 'left')
+                    outIndex = 1;
+                elseif strcmp(thisTurn{1}, 'right')
+                    outIndex = Nlanes;
+                end
+                % (lane numbers: coming in, the left lanes at s = 0, the
+                % right lanes at s = Length; going out, the opposite)
+                if legAtStart(ith_leg)
+                    inLane = ith_lane; inS = 0; inTurn = pi;
+                else
+                    inLane = -ith_lane; inS = inRoad.Length; inTurn = 0;
+                end
+                if legAtStart(outLeg)
+                    outLane = -outIndex; outS = 0; outTurn = 0;
+                else
+                    outLane = outIndex; outS = outRoad.Length; outTurn = pi;
+                end
+                pointIn = fcn_AnimateCar3D_getRoadPoints(inRoad, inS, LaneID=inLane, FigNum=-1);
+                pointOut = fcn_AnimateCar3D_getRoadPoints(outRoad, outS, LaneID=outLane, FigNum=-1);
+                headingIn = pointIn(3) + inTurn;
+                segments = fcn_INTERNAL_turnSegments(pointIn(1:2), headingIn, pointOut(1:2), pointOut(3) + outTurn);
+                pathView = fcn_INTERNAL_planView(segments, [pointIn(1:2) headingIn]);
+                path = struct('ID',sprintf('j%dc%d', ith_junction, numel(connections)+1), 'PlanView',pathView, ...
+                    'Length',pathView(end).S + pathView(end).Length);
+                connections(end+1) = struct('ID',numel(connections)+1, 'IncomingRoad',inRoad.ID, ...
+                    'IncomingLane',inLane, 'OutgoingRoad',outRoad.ID, 'OutgoingLane',outLane, ...
+                    'Turn',thisTurn{1}, 'Path',path); %#ok<AGROW>
+            end
+        end
+    end
+    junction.Connections = connections;
+    junctions(ith_junction) = junction; %#ok<AGROW>
+end
+
+network = struct('ID','urbanGrid', 'Name','urbanGrid', 'TrafficRule','RHT', 'Units','meters, radians', ...
+    'Roads',roads, 'Junctions',junctions, ...
+    'EgoStart',struct('Road','1', 'LaneID',-Nlanes, 'S',0, 'Direction',1));
+end % Ends fcn_INTERNAL_urbanGrid
+
+%% fcn_INTERNAL_gridObjects
+function objects = fcn_INTERNAL_gridObjects(road, laneWidth, Nlanes, flagInAtStart, flagInAtEnd, flagCrossStreet, options, roadIndex, north)
+% One urban-grid road's objects: at each junction end, a crosswalk, a stop
+% line, and lane arrows; block trees along the sidewalks; buildings at
+% random (repeatably) behind them, tall north of the main street and low
+% to its south; and pedestrians standing on the sidewalks
+roadLength = road.Length;
+width = Nlanes*laneWidth;
+curbT = width + 0.15;                      % (the sidewalk's inner edge)
+objects = fcn_INTERNAL_object('', '', 0, 0, 0, 0, 0, 0);
+objects(1) = [];
+arrowNames = {'left','straightRight'};
+if flagInAtStart                           % (traffic comes in on the left lanes, toward s = 0)
+    objects(end+1) = fcn_INTERNAL_object('crosswalk', 'continental', 2.5, 0, 3.0, 2*width, 0, 0);
+    objects(end+1) = fcn_INTERNAL_object('stopLine', 'stopLine', 5.4, width/2, 0.4, width, 0, 0);
+    for ith_lane = 1:Nlanes
+        arrow = fcn_INTERNAL_object('arrow', arrowNames{ith_lane}, 15, (ith_lane - 0.5)*laneWidth, 5, 0.7, 0, 0);
+        arrow.Hdg = pi;
+        objects(end+1) = arrow; %#ok<AGROW>
+    end
+end
+if flagInAtEnd                             % (traffic comes in on the right lanes, toward s = Length)
+    objects(end+1) = fcn_INTERNAL_object('crosswalk', 'continental', roadLength - 2.5, 0, 3.0, 2*width, 0, 0);
+    objects(end+1) = fcn_INTERNAL_object('stopLine', 'stopLine', roadLength - 5.4, -width/2, 0.4, width, 0, 0);
+    for ith_lane = 1:Nlanes
+        objects(end+1) = fcn_INTERNAL_object('arrow', arrowNames{ith_lane}, roadLength - 15, -(ith_lane - 0.5)*laneWidth, 5, 0.7, 0, 0); %#ok<AGROW>
+    end
+end
+
+% Block trees every 15 m, 0.8 m from the curb, clear of the crosswalks
+randomStream = RandStream('mt19937ar', 'Seed', options.Seed + 37*roadIndex);
+sFirst = 8*flagInAtStart + 4*~flagInAtStart;
+sLast = roadLength - (8*flagInAtEnd + 4*~flagInAtEnd);
+for side = [-1 1]
+    for sTree = sFirst:15:sLast
+        objects(end+1) = fcn_INTERNAL_object('tree', 'blockTree', sTree, side*(curbT + 0.8), 2.4, 2.4, 4.4, 0); %#ok<AGROW>
+    end
+end
+
+% Buildings, set back behind the sidewalk, clear of the cross streets (a
+% cross street's arms start past the main street's buildings, which turn
+% the corners)
+heading = road.PlanView(1).Hdg;
+setback = options.BuildingSetback;
+if flagCrossStreet
+    sClear = curbT + 2.5 + setback + 20 + 2 - width;   % (past the main street's deepest buildings)
+else
+    sClear = 2.65 + 1.5 + setback;                     % (past the cross street's sidewalk and grass)
+end
+sFrom = sClear*flagInAtStart;
+sTo = roadLength - sClear*flagInAtEnd;
+buildingSides = lower(char(fcn_INTERNAL_pick(options.BuildingSides, 'both')));
+for side = [-1 1]
+    flagBuildHere = strcmp(buildingSides,'both') || (side > 0 && strcmp(buildingSides,'left')) || ...
+        (side < 0 && strcmp(buildingSides,'right'));
+    sBuilding = sFrom + 2*randomStream.rand;
+    while true
+        buildingLength = 10 + 15*randomStream.rand;
+        if sBuilding + buildingLength > sTo
+            break;
+        end
+        buildingDepth = 12 + 8*randomStream.rand;
+        heightDraw = randomStream.rand;
+        storyDraw = randomStream.rand;
+        buildingT = side*(curbT + 2.5 + setback + buildingDepth/2);
+        % (north of the main street: tall; south: low)
+        if flagCrossStreet
+            flagNorth = dot([cos(heading) sin(heading)], north) > 0;
+        else
+            flagNorth = side > 0;
+        end
+        if flagNorth
+            buildingHeight = 6 + 24*heightDraw^2;
+        else
+            buildingHeight = fcn_INTERNAL_nearSideHeight(heightDraw, storyDraw);
+        end
+        building = fcn_INTERNAL_object('building', 'block', sBuilding + buildingLength/2, buildingT, ...
+            buildingLength, buildingDepth, buildingHeight, 0);
+        shade = 0.55 + 0.3*randomStream.rand;
+        building.Color = shade*[1 0.95 0.88] .* (0.9 + 0.1*randomStream.rand(1,3));
+        if flagBuildHere
+            objects(end+1) = building; %#ok<AGROW>
+        end
+        sBuilding = sBuilding + buildingLength + 2 + 4*randomStream.rand;
+    end
+end
+objects = [objects, fcn_INTERNAL_pedestrians(roadLength, [-1 1]*(curbT + 1.25), 0.6, 15, 0.3, options.Seed + 7*roadIndex)];
+for ith_object = 1:numel(objects)
+    objects(ith_object).ID = ith_object;
+end
+end % Ends fcn_INTERNAL_gridObjects
 
 %% fcn_INTERNAL_turnSegments
 function segments = fcn_INTERNAL_turnSegments(pointIn, headingIn, pointOut, headingOut)

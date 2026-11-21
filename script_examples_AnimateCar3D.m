@@ -34,6 +34,8 @@
 %   %   banking, and the mountain road
 %   % * Added example 6: example 3 at night (every example has a night
 %   %   version: TimeOfDay='night')
+%   % * Added example 7: one lap of the race course
+%   % * Added example 8: the race course with hills and banked curves
 
 % TO-DO:
 %
@@ -128,3 +130,97 @@ if flag_saveGifs
     gifFile = fullfile(pwd, 'Images', 'example6_curvyVaryingSpeedNight.gif');
 end
 fcn_AnimateCar3D_playScenario(scenario, GifFile=gifFile, FigNum=6);
+
+
+%% Example 7. One lap of the race course
+% A race course traced from an overhead photo of a real track (see
+% Data/README_raceCourse.md), scaled so its straights are two 12 ft lanes:
+% about 452 m of winding track with banked red and white curbs, 1.35 m
+% walls, a pit lane beside the bottom straight, and a start line. The ego
+% drives one lap along the track's center, up to 22 m/s on the straights
+% and braking for the corners (no more than 6 m/s^2 sideways).
+scenario = fcn_AnimateCar3D_fillExampleScenario('raceCourse');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example7_raceCourse.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.5, GifDelay=0.1, GifFile=gifFile, FigNum=7);
+
+
+%% Example 8. The race course with hills and banked curves
+% The race course's variants: Elevation='hilly' (about 4 m from lowest to
+% highest, grades up to 6%, the straights level) and CrossSlope='banked'
+% (down to the inside of each curve; the bottom-rightmost curve the other
+% way), here together. The ego rides the surface (height, pitch, roll),
+% and the ground is drawn around the track.
+scenario = fcn_AnimateCar3D_fillExampleScenario('raceCourseHills');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example8_raceCourseHills.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.5, GifDelay=0.1, GifFile=gifFile, FigNum=8);
+
+%% Example 9. Following a lead car
+% Several objects in one scenario: a lead car (red) speeds up and brakes
+% on the two-lane road, and the ego follows it 1.5 s behind (a 30 m gap at
+% 14 m/s), its brake lights on as it slows. Every object in
+% scenario.Motions is drawn; the camera follows the ego.
+scenario = fcn_AnimateCar3D_fillExampleScenario('following');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example9_following.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.25, GifDelay=0.1, GifFile=gifFile, FigNum=9);
+
+%% Example 10. Passing a slow car
+% The ego (15 m/s) signals left, moves into the oncoming lane, passes a
+% slow car (gray, 8 m/s), signals right, and moves back. Its path is made
+% with fcn_AnimateCar3D_getRoadPoints and a smooth offset T(s) across the
+% road.
+scenario = fcn_AnimateCar3D_fillExampleScenario('passing');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example10_passing.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.25, GifDelay=0.1, GifFile=gifFile, FigNum=10);
+
+%% Example 11. Stopping for a pedestrian at a crosswalk
+% On the urban street, the ego brakes to a stop 2 m before the crosswalk
+% (fcn_AnimateCar3D_fillPathMotion's Stops option: rows of [s seconds])
+% while a pedestrian crosses, waits until the pedestrian is past the
+% center line, and drives on.
+scenario = fcn_AnimateCar3D_fillExampleScenario('pedestrianCrossing');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example11_pedestrianCrossing.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.25, GifDelay=0.1, GifFile=gifFile, FigNum=11);
+
+%% Example 12. Through an urban grid
+% The urban grid: a main street with three cross streets, a junction at
+% each (Preset='urbanGrid'). fcn_AnimateCar3D_fillCenterlineOptions lists
+% every path through the junctions (7 from the start); this one goes
+% straight through the first, changes to the left-turn lane mid-block,
+% and turns left at the second. A second car drives the main street the
+% other way (its own start: Start=struct('Road', ..., 'LaneID',2, ...)).
+scenario = fcn_AnimateCar3D_fillExampleScenario('urbanGrid');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example12_urbanGrid.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.25, GifDelay=0.1, GifFile=gifFile, FigNum=12);
+
+%% Example 13. A swinging kite camera
+% The camera's bearing around the followed vehicle (CameraSwing, degrees
+% from its heading: 180 behind, -90 to its right, 0 ahead): here swinging
+% steadily from ahead and to the right (-10) around to behind and to the
+% right (-170), on the curvy road with hills, tilting with the road's
+% grade where the camera is (CameraPitch='road'). CameraSwing can also be
+% one value, a function of time @(t) ..., or 'random' (smooth, within
+% SwingRange, from SwingSeed).
+scenario = fcn_AnimateCar3D_fillExampleScenario('curvyHills');
+gifFile = '';
+if flag_saveGifs
+    gifFile = fullfile(pwd, 'Images', 'example13_swingingCamera.gif');
+end
+fcn_AnimateCar3D_playScenario(scenario, TimeStep=0.25, GifDelay=0.1, CameraSwing=[-10 -170], CameraPitch='road', GifFile=gifFile, FigNum=13);

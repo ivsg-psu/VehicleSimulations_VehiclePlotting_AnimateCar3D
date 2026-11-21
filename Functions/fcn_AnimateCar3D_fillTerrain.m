@@ -43,11 +43,15 @@ function terrain = fcn_AnimateCar3D_fillTerrain(road, options)
 %
 %     (OPTIONAL INPUTS, given as Name=Value pairs)
 %
-%      Margin: meters of ground beyond the road's extent. Default 150.
+%      Margin: meters of ground beyond the road's extent. Default []: the
+%      road's TerrainMargin if it has one (the race course: 30), else 150.
 %
-%      GridSpacing: meters between grid points. Default 5.
+%      GridSpacing: meters between grid points. Default []: the road's
+%      TerrainGridSpacing if it has one (the race course: 1), else 5.
 %
-%      TreesPerHectare: block trees per 10,000 m^2 of ground. Default 6;
+%      TreesPerHectare: block trees per 10,000 m^2 of ground. Default []:
+%      the road's own TreesPerHectare if it has one (the race course: 0),
+%      else 6;
 %      0 for none.
 %
 %      TreeClearance: meters from the road's outer edge to the nearest
@@ -119,9 +123,9 @@ function terrain = fcn_AnimateCar3D_fillTerrain(road, options)
 arguments
 
     road
-    options.Margin = 150          % meters of ground beyond the road
-    options.GridSpacing = 5       % meters between grid points
-    options.TreesPerHectare = 6   % block trees per 10,000 m^2; 0 for none
+    options.Margin = []           % meters of ground beyond the road; [] for the road's TerrainMargin, else 150
+    options.GridSpacing = []      % meters between grid points; [] for the road's TerrainGridSpacing, else 5
+    options.TreesPerHectare = []  % block trees per 10,000 m^2; 0 for none; [] for the road's (TreesPerHectare field), else 6
     options.TreeClearance = 8     % meters from the road's outer edge
     options.Shape = ''            % 'fitted' or 'mountain'; '' for the road's TerrainShape
     options.PeakHeight = 250      % 'mountain': meters above the road's highest point
@@ -184,14 +188,17 @@ if 0==flag_max_speed
         end
 
         % Check the numbers
-        numberNames = {'Margin','GridSpacing','TreesPerHectare','TreeClearance','PeakHeight','Seed'};
+        numberNames = {'Margin','GridSpacing','TreeClearance','PeakHeight','Seed'};
+        if ~isempty(options.TreesPerHectare) && ~(isnumeric(options.TreesPerHectare) && isscalar(options.TreesPerHectare) && options.TreesPerHectare >= 0)
+            error('TreesPerHectare must be a number, 0 or more, or []');
+        end
         for ith_name = 1:numel(numberNames)
             thisValue = options.(numberNames{ith_name});
-            if ~(isnumeric(thisValue) && isscalar(thisValue) && thisValue >= 0)
+            if ~(isnumeric(thisValue) && (isempty(thisValue) || isscalar(thisValue)) && all(thisValue >= 0))
                 error('%s must be a number, 0 or more', numberNames{ith_name});
             end
         end
-        if options.GridSpacing <= 0
+        if ~isempty(options.GridSpacing) && options.GridSpacing <= 0
             error('GridSpacing must be positive');
         end
 
@@ -237,11 +244,20 @@ footprints = struct('S',{}, 'RightT',{}, 'LeftT',{}, 'RightXYZ',{}, 'LeftXYZ',{}
 for ith_road = 1:numel(roads)
     thisRoad = roads(ith_road);
     sEdge = unique([0:2:thisRoad.Length, thisRoad.Length])';
-    section = thisRoad.LaneSections(1);
-    [~, rightOrder] = max(abs([section.Right.ID]));
-    [~, leftOrder] = max(abs([section.Left.ID]));
-    [rightEdge, rightT, rightZ] = fcn_AnimateCar3D_getRoadPoints(thisRoad, sEdge, LaneID=section.Right(rightOrder).ID, LaneEdge='outer', FigNum=-1);
-    [leftEdge, leftT, leftZ] = fcn_AnimateCar3D_getRoadPoints(thisRoad, sEdge, LaneID=section.Left(leftOrder).ID, LaneEdge='outer', FigNum=-1);
+    % (the outer edges of each lane section's outermost lanes: the lanes
+    % may change from section to section)
+    sectionStarts = [thisRoad.LaneSections.S];
+    sectionIndex = max(sum(sEdge >= sectionStarts, 2), 1);
+    rightEdge = zeros(numel(sEdge),3); rightT = zeros(numel(sEdge),1); rightZ = rightT;
+    leftEdge = rightEdge; leftT = rightT; leftZ = rightT;
+    for ith_section = unique(sectionIndex)'
+        rows = sectionIndex==ith_section;
+        section = thisRoad.LaneSections(ith_section);
+        [~, rightOrder] = max(abs([section.Right.ID]));
+        [~, leftOrder] = max(abs([section.Left.ID]));
+        [rightEdge(rows,:), rightT(rows), rightZ(rows)] = fcn_AnimateCar3D_getRoadPoints(thisRoad, sEdge(rows), LaneID=section.Right(rightOrder).ID, LaneEdge='outer', FigNum=-1);
+        [leftEdge(rows,:), leftT(rows), leftZ(rows)] = fcn_AnimateCar3D_getRoadPoints(thisRoad, sEdge(rows), LaneID=section.Left(leftOrder).ID, LaneEdge='outer', FigNum=-1);
+    end
     edgePoints = [edgePoints; rightEdge(:,1:2); leftEdge(:,1:2)]; %#ok<AGROW>
     edgeZ = [edgeZ; rightZ; leftZ]; %#ok<AGROW>
     footprints(ith_road) = struct('S',sEdge, 'RightT',rightT, 'LeftT',leftT, ...
@@ -264,9 +280,10 @@ if strcmp(shapeChoice, 'mountain')
 end
 
 %%%% The grid
-spacing = options.GridSpacing;
-xGrid = (floor((min(extentXY(:,1)) - options.Margin)/spacing):ceil((max(extentXY(:,1)) + options.Margin)/spacing))*spacing;
-yGrid = (floor((min(extentXY(:,2)) - options.Margin)/spacing):ceil((max(extentXY(:,2)) + options.Margin)/spacing))*spacing;
+spacing = fcn_INTERNAL_roadDefault(options.GridSpacing, road, 'TerrainGridSpacing', 5);
+margin = fcn_INTERNAL_roadDefault(options.Margin, road, 'TerrainMargin', 150);
+xGrid = (floor((min(extentXY(:,1)) - margin)/spacing):ceil((max(extentXY(:,1)) + margin)/spacing))*spacing;
+yGrid = (floor((min(extentXY(:,2)) - margin)/spacing):ceil((max(extentXY(:,2)) + margin)/spacing))*spacing;
 [gridX, gridY] = meshgrid(xGrid, yGrid);
 Nnodes = numel(gridX);
 
@@ -345,7 +362,14 @@ kernel = kernel/sum(kernel);
 noise = conv2(kernel, kernel, noise, 'same')./max(conv2(kernel, kernel, ones(Ny-1, Nx-1), 'same'), eps);
 shade = 1 + 0.03*noise/max(max(abs(noise(:))), eps);
 area = (xGrid(end) - xGrid(1))*(yGrid(end) - yGrid(1));
-Ncandidates = round(options.TreesPerHectare*area/1e4);
+treesPerHectare = options.TreesPerHectare;
+if isempty(treesPerHectare)
+    treesPerHectare = 6;
+    if isfield(road, 'TreesPerHectare') && ~isempty(road.TreesPerHectare)
+        treesPerHectare = road.TreesPerHectare;     % (e.g. the race course: none)
+    end
+end
+Ncandidates = round(treesPerHectare*area/1e4);
 trees = struct('XYZ',{}, 'Height',{}, 'Width',{}, 'Side',{});
 if Ncandidates > 0
     candidateXY = [xGrid(1) + (xGrid(end) - xGrid(1))*randomStream.rand(Ncandidates,1), ...
@@ -412,6 +436,19 @@ end % Ends main function
 %
 % See: https://patorjk.com/software/taag/#p=display&f=Big&t=Functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% fcn_INTERNAL_roadDefault
+function value = fcn_INTERNAL_roadDefault(given, road, fieldName, fallback)
+% The given value; if empty, the road's own (a field of that name), else
+% the fallback
+value = given;
+if isempty(value)
+    value = fallback;
+    if isfield(road, fieldName) && ~isempty(road.(fieldName))
+        value = road.(fieldName);
+    end
+end
+end % Ends fcn_INTERNAL_roadDefault
 
 %% fcn_INTERNAL_nearestDistance
 function distances = fcn_INTERNAL_nearestDistance(queryXY, pointsXY)

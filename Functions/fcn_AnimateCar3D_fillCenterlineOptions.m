@@ -13,7 +13,11 @@ function centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, option
 %     solid line), in each oncoming lane, against its traffic (passing);
 %   - at a junction, through each turn its lane allows (OpenDRIVE
 %     connections: left, straight, right), then on along the lane it
-%     leads to.
+%     leads to; when that road ends at another junction, on through it
+%     too (up to MaxJunctions junctions), in each lane going that way
+%     (changing lanes smoothly, over LaneChangeLength meters at the
+%     middle of the road, when the lane is not the one the turn led to).
+%     Every combination is listed (a road is not used twice).
 %
 % Each path also lists the roads and lanes it uses (as an ASAM
 % OpenSCENARIO route would).
@@ -21,7 +25,8 @@ function centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, option
 % FORMAT:
 %
 %       centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road,...
-%           (Start=start), (Spacing=meters), (FigNum=figNum))
+%           (Start=start), (Spacing=meters), (MaxJunctions=n),...
+%           (LaneChangeLength=meters), (FigNum=figNum))
 %
 % INPUTS:
 %
@@ -34,6 +39,13 @@ function centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, option
 %      Default: the scene's fixed start, road.EgoStart.
 %
 %      Spacing: meters between points along each path. Default 1.
+%
+%      MaxJunctions: the most junctions a path goes through. Default Inf
+%      (all of them, to the edge of the scene); 1 for the first only.
+%
+%      LaneChangeLength: meters over which a path changes lanes between
+%      junctions (a smooth step across, at the middle of the road; no
+%      longer than 60% of the road). Default 30.
 %
 %      FigNum: a figure to draw the road and the paths in, from above.
 %      Empty (default) for no figure; -1 for fast mode (no input checks).
@@ -74,12 +86,16 @@ function centerlineOptions = fcn_AnimateCar3D_fillCenterlineOptions(road, option
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillCenterlineOptions
 %   % * Wrote the code originally (drafted with Claude)
+%
+% 2026_11_20 by Sean Brennan, sbrennan@psu.edu
+% - In fcn_AnimateCar3D_fillCenterlineOptions
+%   % * Paths through more than one junction (MaxJunctions), with smooth lane changes between them (LaneChangeLength)
 
 % TO-DO:
 %
 % 2026_11_19 by Sean Brennan, sbrennan@psu.edu
 % - In fcn_AnimateCar3D_fillCenterlineOptions
-%   % * Paths through more than one junction (all combinations, or one list per junction); lane-change paths with a chosen length
+%   % * Lane-change paths with a chosen length on the starting road (now: that lane's center from the start)
 
 
 
@@ -93,6 +109,8 @@ arguments
     road
     options.Start = []            % Road, LaneID, S, Direction; [] for road.EgoStart
     options.Spacing = 1           % meters between points
+    options.MaxJunctions = Inf    % the most junctions a path goes through
+    options.LaneChangeLength = 30 % meters, for a lane change between junctions
     options.FigNum = []           % figure to draw the paths; -1 for fast mode
 end
 
@@ -157,6 +175,13 @@ if 0==flag_max_speed
         end
         if ~(isnumeric(options.Spacing) && isscalar(options.Spacing) && options.Spacing > 0)
             error('Spacing must be a positive number of meters');
+        end
+        if ~(isnumeric(options.MaxJunctions) && isscalar(options.MaxJunctions) && options.MaxJunctions >= 1 && ...
+                (isinf(options.MaxJunctions) || options.MaxJunctions==round(options.MaxJunctions)))
+            error('MaxJunctions must be a whole number, 1 or more, or Inf');
+        end
+        if ~(isnumeric(options.LaneChangeLength) && isscalar(options.LaneChangeLength) && options.LaneChangeLength > 0)
+            error('LaneChangeLength must be a positive number of meters');
         end
     end
 end
@@ -230,7 +255,23 @@ end
 
 %%%% Each path
 centerlineOptions = {};
-for laneID = [sameLanes, oncomingLanes]
+lanesToFollow = [sameLanes, oncomingLanes];
+if isfield(startRoad, 'Loop') && startRoad.Loop
+    % A closed course (road.Loop): one lap from the start, along the
+    % track's center and along the center of each half
+    loopIDs = [0 -1 1];
+    loopNames = {'track center', 'right half', 'left half'};
+    for ith_path = 1:numel(loopIDs)
+        lapS = mod(start.S + fcn_INTERNAL_steps(0, startRoad.Length, spacing), startRoad.Length);
+        lapS(end) = start.S;                                % (back to the start: s wraps at Length)
+        lapPoints = fcn_AnimateCar3D_getRoadPoints(startRoad, lapS, LaneID=loopIDs(ith_path), FigNum=-1);
+        lapStep = struct('Road',startRoad.ID, 'LaneID',loopIDs(ith_path), 'Direction',1, 'SFrom',start.S, 'STo',start.S);
+        centerlineOptions{end+1} = fcn_INTERNAL_option(loopNames{ith_path}, ...
+            sprintf('one lap, along the %s', loopNames{ith_path}), lapPoints, lapStep); %#ok<AGROW>
+    end
+    lanesToFollow = [];
+end
+for laneID = lanesToFollow
     flagOncoming = ismember(laneID, oncomingLanes);
     [firstPiece, routeStep] = fcn_INTERNAL_lanePiece(startRoad, laneID, start.S, start.Direction, spacing);
     if laneID==start.LaneID
@@ -244,34 +285,27 @@ for laneID = [sameLanes, oncomingLanes]
         laneWords = sprintf('change to lane %d', laneID);
     end
 
-    % At a junction (the lane ends at s = 0, going against s), each turn
-    flagAtJunction = start.Direction < 0 && ~isempty(connections) && ~flagOncoming;
-    if flagAtJunction
-        laneConnections = connections(strcmp({connections.IncomingRoad}, startRoad.ID) & [connections.IncomingLane]==laneID);
+    % At a junction (where the lane comes in to one), each turn, and on
+    % through the junctions after it
+    if flagOncoming || isempty(connections)
+        continuations = [];
     else
-        laneConnections = [];
+        continuations = fcn_INTERNAL_continue(roads, connections, startRoad.ID, laneID, options.MaxJunctions, ...
+            {startRoad.ID}, spacing, options.LaneChangeLength);
     end
-    if isempty(laneConnections)
+    if isempty(continuations)
         centerlineOptions{end+1} = fcn_INTERNAL_option(laneName, laneWords, firstPiece, routeStep); %#ok<AGROW>
         continue;
     end
-    for ith_connection = 1:numel(laneConnections)
-        thisConnection = laneConnections(ith_connection);
-        pathPoints = fcn_AnimateCar3D_getRoadPoints(thisConnection.Path, fcn_INTERNAL_steps(0, thisConnection.Path.Length, spacing), FigNum=-1);
-        outRoad = roads(strcmp(roadIDs, thisConnection.OutgoingRoad));
-        [lastPiece, lastStep] = fcn_INTERNAL_lanePiece(outRoad, thisConnection.OutgoingLane, 0, 1, spacing);
-        pieces = [firstPiece; pathPoints(2:end,:); lastPiece(2:end,:)];
-        route = [routeStep; struct('Road',thisConnection.Path.ID, 'LaneID',0, 'Direction',1, 'SFrom',0, ...
-            'STo',thisConnection.Path.Length); lastStep];
-        if laneID==start.LaneID
-            turnName = sprintf('%s turn', thisConnection.Turn);
-        else
-            turnName = sprintf('lane %d, %s turn', laneID, thisConnection.Turn);
+    for ith_continuation = 1:numel(continuations)
+        thisContinuation = continuations(ith_continuation);
+        pieces = [firstPiece; thisContinuation.Points];
+        route = [routeStep; thisContinuation.Route];
+        turnName = strjoin(thisContinuation.Names, ', ');
+        if laneID~=start.LaneID
+            turnName = sprintf('lane %d, %s', laneID, turnName);
         end
-        if strcmp(thisConnection.Turn,'straight')
-            turnName = strrep(turnName, 'straight turn', 'straight');
-        end
-        words = sprintf('%s, then %s onto road %s (lane %d)', laneWords, thisConnection.Turn, outRoad.ID, thisConnection.OutgoingLane);
+        words = sprintf('%s, then %s', laneWords, strjoin(thisContinuation.Words, ', then '));
         centerlineOptions{end+1} = fcn_INTERNAL_option(turnName, words, pieces, route); %#ok<AGROW>
     end
 end
@@ -353,6 +387,110 @@ if direction < 0
 end
 routeStep = struct('Road',road.ID, 'LaneID',laneID, 'Direction',direction, 'SFrom',sStart, 'STo',sEnd);
 end % Ends fcn_INTERNAL_lanePiece
+
+%% fcn_INTERNAL_continue
+function continuations = fcn_INTERNAL_continue(roads, connections, roadID, laneID, junctionsLeft, roadsUsed, spacing, changeLength)
+% Every way on from the end of a lane that comes in to a junction:
+% through each turn its lane allows, then along the lane the turn leads
+% to; if that road ends at another junction too (and junctionsLeft > 1),
+% in each of its lanes going that way, on through that junction as well.
+% Each continuation has Points (N x 3, x y heading, without the lane's
+% last point), Route, Names (one per junction: 'left turn', 'straight',
+% 'right turn', after 'lane k' for a lane change), and Words.
+roadIDs = {roads.ID};
+continuations = struct('Points',{}, 'Route',{}, 'Names',{}, 'Words',{});
+laneConnections = connections(strcmp({connections.IncomingRoad}, roadID) & [connections.IncomingLane]==laneID);
+for ith_connection = 1:numel(laneConnections)
+    thisConnection = laneConnections(ith_connection);
+    if any(strcmp(roadsUsed, thisConnection.OutgoingRoad))
+        continue;                                   % (no road twice)
+    end
+    pathPoints = fcn_AnimateCar3D_getRoadPoints(thisConnection.Path, fcn_INTERNAL_steps(0, thisConnection.Path.Length, spacing), FigNum=-1);
+    pathStep = struct('Road',thisConnection.Path.ID, 'LaneID',0, 'Direction',1, 'SFrom',0, 'STo',thisConnection.Path.Length);
+    outRoad = roads(strcmp(roadIDs, thisConnection.OutgoingRoad));
+    outLane = thisConnection.OutgoingLane;
+    % (going out: the right lanes run along s from 0, the left lanes
+    % against it from the road's end)
+    direction = -sign(outLane);
+    if direction > 0
+        outS = 0;
+    else
+        outS = outRoad.Length;
+    end
+    turnName = sprintf('%s turn', thisConnection.Turn);
+    if strcmp(thisConnection.Turn, 'straight')
+        turnName = 'straight';
+    end
+    turnWords = sprintf('%s onto road %s (lane %d)', thisConnection.Turn, outRoad.ID, outLane);
+
+    % The lanes going this way on the next road that come in to a junction
+    nextLanes = [];
+    if junctionsLeft > 1
+        section = outRoad.LaneSections(1);
+        if direction > 0
+            sameSide = section.Right;
+        else
+            sameSide = section.Left;
+        end
+        sameLanes = [sameSide(strcmp({sameSide.Type},'driving')).ID];
+        [~, order] = sort(abs(sameLanes - outLane));
+        sameLanes = sameLanes(order);                 % (the turn's own lane first)
+        flagIn = arrayfun(@(lane) any(strcmp({connections.IncomingRoad}, outRoad.ID) & [connections.IncomingLane]==lane), sameLanes);
+        nextLanes = sameLanes(flagIn);
+    end
+    if isempty(nextLanes)
+        [lastPiece, lastStep] = fcn_INTERNAL_lanePiece(outRoad, outLane, outS, direction, spacing);
+        continuations(end+1) = struct('Points',[pathPoints(2:end,:); lastPiece(2:end,:)], 'Route',[pathStep; lastStep], ...
+            'Names',{{turnName}}, 'Words',{{turnWords}}); %#ok<AGROW>
+        continue;
+    end
+    for nextLane = nextLanes
+        [lastPiece, lastStep] = fcn_INTERNAL_changePiece(outRoad, outLane, nextLane, outS, direction, spacing, changeLength);
+        laterOnes = fcn_INTERNAL_continue(roads, connections, outRoad.ID, nextLane, junctionsLeft - 1, ...
+            [roadsUsed, {outRoad.ID}], spacing, changeLength);
+        words = turnWords;
+        if nextLane ~= outLane
+            words = sprintf('%s, changing to lane %d', turnWords, nextLane);
+        end
+        if isempty(laterOnes)
+            continuations(end+1) = struct('Points',[pathPoints(2:end,:); lastPiece(2:end,:)], 'Route',[pathStep; lastStep], ...
+                'Names',{{turnName}}, 'Words',{{words}}); %#ok<AGROW>
+            continue;
+        end
+        for ith_later = 1:numel(laterOnes)
+            laterNames = laterOnes(ith_later).Names;
+            if nextLane ~= outLane
+                laterNames{1} = sprintf('lane %d, %s', nextLane, laterNames{1});
+            end
+            continuations(end+1) = struct('Points',[pathPoints(2:end,:); lastPiece(2:end,:); laterOnes(ith_later).Points], ...
+                'Route',[pathStep; lastStep; laterOnes(ith_later).Route], 'Names',{[{turnName}, laterNames]}, ...
+                'Words',{[{words}, laterOnes(ith_later).Words]}); %#ok<AGROW>
+        end
+    end
+end
+end % Ends fcn_INTERNAL_continue
+
+%% fcn_INTERNAL_changePiece
+function [points, routeStep] = fcn_INTERNAL_changePiece(road, fromLane, toLane, sStart, direction, spacing, changeLength)
+% A lane's center from sStart to the road's end, changing from fromLane
+% to toLane over changeLength meters (a smooth step) at the road's middle
+[points, routeStep] = fcn_INTERNAL_lanePiece(road, toLane, sStart, direction, spacing);
+if fromLane==toLane
+    return;
+end
+sValues = fcn_INTERNAL_steps(sStart, routeStep.STo, spacing);
+[~, fromT] = fcn_AnimateCar3D_getRoadPoints(road, sValues, LaneID=fromLane, FigNum=-1);
+[~, toT] = fcn_AnimateCar3D_getRoadPoints(road, sValues, LaneID=toLane, FigNum=-1);
+traveled = abs(sValues - sStart);
+roadLength = abs(routeStep.STo - sStart);
+changeLength = min(changeLength, 0.6*roadLength);
+progress = min(max((traveled - (roadLength - changeLength)/2)/changeLength, 0), 1);
+blend = 3*progress.^2 - 2*progress.^3;
+points = fcn_AnimateCar3D_getRoadPoints(road, sValues, T=fromT + (toT - fromT).*blend, FigNum=-1);
+% (the heading of travel, from the points themselves)
+points(:,3) = atan2(gradient(points(:,2)), gradient(points(:,1)));
+routeStep.LaneID = toLane;
+end % Ends fcn_INTERNAL_changePiece
 
 %% fcn_INTERNAL_option
 function option = fcn_INTERNAL_option(optionName, words, points, route)
